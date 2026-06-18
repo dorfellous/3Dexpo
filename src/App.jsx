@@ -1,14 +1,16 @@
-import { Component, Suspense, useEffect, useRef, useState } from 'react'
+import { Component, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { BackSide, Euler, MathUtils, Raycaster, Vector3 } from 'three'
+import { BackSide, Euler, MathUtils, Raycaster, Vector2, Vector3 } from 'three'
 import {
   ContactShadows,
   Environment,
   Html,
   useGLTF,
 } from '@react-three/drei'
+import products from './data/products'
 
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
+const WHATSAPP_NUMBER = '972000000000'
 const EYE_HEIGHT = 1.65
 const START_POSITION = [8.776, 1.650, -45.208]
 const START_YAW = Math.PI
@@ -17,6 +19,7 @@ const MIN_FLOOR_Y = 0
 const FLOOR_RAY_HEIGHT = 1.2
 const FLOOR_RAY_DISTANCE = 4
 const MAX_STEP_HEIGHT = 0.45
+const PRODUCT_INTERACTION_DISTANCE = 6
 
 class ModelErrorBoundary extends Component {
   constructor(props) {
@@ -56,6 +59,195 @@ function SceneModel({ onCollisionMeshes }) {
   }, [gltf.scene, onCollisionMeshes])
 
   return <primitive object={gltf.scene} />
+}
+
+function resolvePublicAssetPath(path) {
+  if (!path) {
+    return ''
+  }
+
+  if (path.startsWith('http') || path.startsWith(import.meta.env.BASE_URL)) {
+    return path
+  }
+
+  return `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`
+}
+
+function ProductFallback({ highlighted = false }) {
+  return (
+    <group>
+      <mesh position={[0, 0.12, 0]} receiveShadow>
+        <cylinderGeometry args={[0.62, 0.72, 0.24, 48]} />
+        <meshStandardMaterial color="#161616" roughness={0.68} metalness={0.25} />
+      </mesh>
+      <mesh position={[0, 0.82, 0]} castShadow>
+        <icosahedronGeometry args={[0.46, 2]} />
+        <meshStandardMaterial
+          color="#d8d8d8"
+          emissive={highlighted ? '#2f3b5c' : '#000000'}
+          emissiveIntensity={highlighted ? 0.45 : 0}
+          roughness={0.32}
+          metalness={0.38}
+        />
+      </mesh>
+    </group>
+  )
+}
+
+function ProductAsset({ product, highlighted = false }) {
+  const assetPath = resolvePublicAssetPath(product.model)
+  const gltf = useGLTF(assetPath)
+  const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
+
+  useEffect(() => {
+    scene.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+  }, [scene])
+
+  return (
+    <>
+      <primitive object={scene} />
+      {highlighted && <ProductHighlight scale={product.scale} />}
+    </>
+  )
+}
+
+function ProductHighlight({ scale = 1 }) {
+  const highlightScale = Math.max(0.8, scale * 1.15)
+
+  return (
+    <group>
+      <mesh position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={highlightScale}>
+        <torusGeometry args={[0.7, 0.01, 12, 72]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.48} />
+      </mesh>
+      <pointLight intensity={1.2} distance={2.6} color="#9fb3ff" position={[0, 1.2, 0]} />
+    </group>
+  )
+}
+
+function ProductNode({ product, highlighted, registerProductGroup }) {
+  const groupRef = useRef(null)
+  const hasModel = Boolean(product.model)
+
+  useEffect(() => {
+    if (!groupRef.current) {
+      return undefined
+    }
+
+    return registerProductGroup(product.id, groupRef.current)
+  }, [product.id, registerProductGroup])
+
+  return (
+    <group
+      ref={groupRef}
+      position={product.position}
+      rotation={product.rotation}
+      scale={product.scale}
+      userData={{ productId: product.id }}
+    >
+      {hasModel ? (
+        <ModelErrorBoundary
+          fallback={
+            <>
+              <ProductFallback highlighted={highlighted} />
+              {highlighted && <ProductHighlight scale={product.scale} />}
+            </>
+          }
+        >
+          <Suspense fallback={<ProductFallback highlighted={highlighted} />}>
+            <ProductAsset product={product} highlighted={highlighted} />
+          </Suspense>
+        </ModelErrorBoundary>
+      ) : (
+        <>
+          <ProductFallback highlighted={highlighted} />
+          {highlighted && <ProductHighlight scale={product.scale} />}
+        </>
+      )}
+    </group>
+  )
+}
+
+function ProductGallery({ hoveredProductId, registerProductGroup }) {
+  return products.map((product) => (
+    <ProductNode
+      key={product.id}
+      product={product}
+      highlighted={hoveredProductId === product.id}
+      registerProductGroup={registerProductGroup}
+    />
+  ))
+}
+
+function ProductInteractor({ activeProduct, productGroups, onHoverProduct, onOpenProduct }) {
+  const { camera, gl } = useThree()
+  const raycaster = useRef(new Raycaster())
+  const screenCenter = useRef(new Vector2(0, 0))
+  const hoveredProductRef = useRef(null)
+
+  useFrame(() => {
+    if (activeProduct) {
+      if (hoveredProductRef.current) {
+        hoveredProductRef.current = null
+        onHoverProduct(null)
+      }
+      return
+    }
+
+    const groups = Array.from(productGroups.current.values())
+    if (groups.length === 0) {
+      return
+    }
+
+    raycaster.current.setFromCamera(screenCenter.current, camera)
+    raycaster.current.far = PRODUCT_INTERACTION_DISTANCE
+    const hit = raycaster.current.intersectObjects(groups, true)[0]
+    const productId = hit?.object
+      ? findProductId(hit.object)
+      : null
+
+    if (productId !== hoveredProductRef.current) {
+      hoveredProductRef.current = productId
+      onHoverProduct(productId)
+    }
+  })
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    const handleClick = () => {
+      const product = products.find((item) => item.id === hoveredProductRef.current)
+      if (product && !activeProduct) {
+        onOpenProduct(product)
+      }
+    }
+
+    canvas.addEventListener('click', handleClick)
+
+    return () => {
+      canvas.removeEventListener('click', handleClick)
+    }
+  }, [activeProduct, gl.domElement, onOpenProduct])
+
+  return null
+}
+
+function findProductId(object) {
+  let current = object
+
+  while (current) {
+    if (current.userData?.productId) {
+      return current.userData.productId
+    }
+
+    current = current.parent
+  }
+
+  return null
 }
 
 function DemoEnvironment() {
@@ -104,7 +296,7 @@ function CurvedHorizon() {
   )
 }
 
-function FirstPersonControls({ collisionMeshes }) {
+function FirstPersonControls({ collisionMeshes, enabled }) {
   const { camera, gl } = useThree()
   const keys = useRef({})
   const velocity = useRef(new Vector3())
@@ -123,10 +315,22 @@ function FirstPersonControls({ collisionMeshes }) {
   const downDirection = useRef(new Vector3(0, -1, 0))
   const activeTouchLook = useRef(null)
   const collisionMeshesRef = useRef([])
+  const enabledRef = useRef(enabled)
 
   useEffect(() => {
     collisionMeshesRef.current = collisionMeshes
   }, [collisionMeshes])
+
+  useEffect(() => {
+    enabledRef.current = enabled
+    if (!enabled) {
+      keys.current = {}
+      velocity.current.set(0, 0, 0)
+      if (document.pointerLockElement === gl.domElement) {
+        document.exitPointerLock?.()
+      }
+    }
+  }, [enabled, gl.domElement])
 
   useEffect(() => {
     camera.position.set(...START_POSITION)
@@ -134,14 +338,16 @@ function FirstPersonControls({ collisionMeshes }) {
 
     const canvas = gl.domElement
     const updateKey = (event, isPressed) => {
-      keys.current[event.code] = isPressed
+      if (enabledRef.current || !isPressed) {
+        keys.current[event.code] = isPressed
+      }
     }
 
     const handleKeyDown = (event) => updateKey(event, true)
     const handleKeyUp = (event) => updateKey(event, false)
 
     const handleClick = () => {
-      if (document.pointerLockElement !== canvas) {
+      if (enabledRef.current && document.pointerLockElement !== canvas) {
         canvas.requestPointerLock?.()
       }
     }
@@ -159,13 +365,13 @@ function FirstPersonControls({ collisionMeshes }) {
     }
 
     const handleMouseMove = (event) => {
-      if (document.pointerLockElement === canvas) {
+      if (enabledRef.current && document.pointerLockElement === canvas) {
         applyLookDelta(event.movementX, event.movementY)
       }
     }
 
     const handlePointerDown = (event) => {
-      if (event.pointerType === 'touch') {
+      if (enabledRef.current && event.pointerType === 'touch') {
         activeTouchLook.current = {
           id: event.pointerId,
           x: event.clientX,
@@ -294,6 +500,11 @@ function FirstPersonControls({ collisionMeshes }) {
   }
 
   useFrame((_, delta) => {
+    if (!enabledRef.current) {
+      velocity.current.set(0, 0, 0)
+      return
+    }
+
     const pressed = keys.current
     const inputX =
       Number(Boolean(pressed.KeyD || pressed.ArrowRight)) -
@@ -323,7 +534,9 @@ function FirstPersonControls({ collisionMeshes }) {
   })
 
   const setVirtualKey = (code, isPressed) => {
-    keys.current[code] = isPressed
+    if (enabledRef.current || !isPressed) {
+      keys.current[code] = isPressed
+    }
   }
 
   return (
@@ -370,53 +583,140 @@ function FirstPersonControls({ collisionMeshes }) {
   )
 }
 
-function Experience() {
-  const [collisionMeshes, setCollisionMeshes] = useState([])
+function ProductPreview({ product }) {
+  const hasModel = Boolean(product.model)
 
   return (
-    <Canvas
-      shadows
-      camera={{ position: START_POSITION, fov: 68 }}
-      dpr={[1, 2]}
-      gl={{ antialias: true, alpha: false }}
-    >
-      <color attach="background" args={['#050505']} />
-      <fog attach="fog" args={['#050505', 8, 30]} />
-      <ambientLight intensity={0.22} />
-      <directionalLight
-        castShadow
-        intensity={2.8}
-        position={[4.5, 7, 3.2]}
-        shadow-mapSize={[2048, 2048]}
-      />
-      <spotLight
-        castShadow
-        angle={0.32}
-        penumbra={0.8}
-        intensity={5.4}
-        position={[-3.8, 5.8, 1.5]}
-        color="#d9e4ff"
-      />
-      <pointLight intensity={1.4} position={[3, 1.8, -3.5]} color="#5f7cff" />
-      <pointLight intensity={1.1} position={[-4, 1.2, -2.5]} color="#ffffff" />
-      <CurvedHorizon />
-
-      <Suspense fallback={<Loader />}>
-        <ModelErrorBoundary fallback={<DemoEnvironment />}>
-          <SceneModel onCollisionMeshes={setCollisionMeshes} />
-        </ModelErrorBoundary>
-        <Environment preset="night" />
-        <ContactShadows
-          opacity={0.35}
-          scale={12}
-          blur={2.8}
-          far={8}
-          position={[0, -0.03, 0]}
-        />
-      </Suspense>
-
-      <FirstPersonControls collisionMeshes={collisionMeshes} />
+    <Canvas camera={{ position: [0, 1.05, 3], fov: 42 }} dpr={[1, 2]} gl={{ alpha: true }}>
+      <ambientLight intensity={0.65} />
+      <directionalLight intensity={2.4} position={[2.4, 3, 2]} />
+      <group position={[0, -0.35, 0]} rotation={product.rotation} scale={product.scale}>
+        {hasModel ? (
+          <Suspense fallback={<ProductFallback />}>
+            <ModelErrorBoundary fallback={<ProductFallback />}>
+              <ProductAsset product={product} />
+            </ModelErrorBoundary>
+          </Suspense>
+        ) : (
+          <ProductFallback />
+        )}
+      </group>
     </Canvas>
+  )
+}
+
+function ProductPanel({ product, onClose }) {
+  if (!product) {
+    return null
+  }
+
+  const productMessage =
+    product.whatsappMessage ||
+    `Hello, I'm interested in purchasing ${product.name} priced at ${product.price}.`
+  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(productMessage)}`
+
+  return (
+    <div className="product-panel-backdrop" role="presentation">
+      <aside className="product-panel" aria-label={`${product.name} product details`}>
+        <div className="product-panel__preview">
+          <ProductPreview product={product} />
+        </div>
+        <div className="product-panel__content">
+          <p className="eyebrow">Gallery piece</p>
+          <h2>{product.name}</h2>
+          <p className="product-panel__description">{product.description}</p>
+          <p className="product-panel__price">{product.price}</p>
+          <div className="product-panel__actions">
+            <a className="buy-button" href={whatsappUrl} target="_blank" rel="noreferrer">
+              Buy Now
+            </a>
+            <button className="close-button" type="button" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function Experience() {
+  const [collisionMeshes, setCollisionMeshes] = useState([])
+  const [hoveredProductId, setHoveredProductId] = useState(null)
+  const [activeProduct, setActiveProduct] = useState(null)
+  const productGroups = useRef(new Map())
+  const controlsEnabled = !activeProduct
+
+  const registerProductGroup = (id, group) => {
+    productGroups.current.set(id, group)
+
+    return () => {
+      productGroups.current.delete(id)
+    }
+  }
+
+  return (
+    <>
+      <Canvas
+        shadows
+        camera={{ position: START_POSITION, fov: 68 }}
+        dpr={[1, 2]}
+        gl={{ antialias: true, alpha: false }}
+      >
+        <color attach="background" args={['#050505']} />
+        <fog attach="fog" args={['#050505', 8, 30]} />
+        <ambientLight intensity={0.22} />
+        <directionalLight
+          castShadow
+          intensity={2.8}
+          position={[4.5, 7, 3.2]}
+          shadow-mapSize={[2048, 2048]}
+        />
+        <spotLight
+          castShadow
+          angle={0.32}
+          penumbra={0.8}
+          intensity={5.4}
+          position={[-3.8, 5.8, 1.5]}
+          color="#d9e4ff"
+        />
+        <pointLight intensity={1.4} position={[3, 1.8, -3.5]} color="#5f7cff" />
+        <pointLight intensity={1.1} position={[-4, 1.2, -2.5]} color="#ffffff" />
+        <CurvedHorizon />
+
+        <Suspense fallback={<Loader />}>
+          <ModelErrorBoundary fallback={<DemoEnvironment />}>
+            <SceneModel onCollisionMeshes={setCollisionMeshes} />
+          </ModelErrorBoundary>
+          <ProductGallery
+            hoveredProductId={hoveredProductId}
+            registerProductGroup={registerProductGroup}
+          />
+          <Environment preset="night" />
+          <ContactShadows
+            opacity={0.35}
+            scale={12}
+            blur={2.8}
+            far={8}
+            position={[0, -0.03, 0]}
+          />
+        </Suspense>
+
+        <ProductInteractor
+          activeProduct={activeProduct}
+          productGroups={productGroups}
+          onHoverProduct={setHoveredProductId}
+          onOpenProduct={setActiveProduct}
+        />
+        <FirstPersonControls collisionMeshes={collisionMeshes} enabled={controlsEnabled} />
+      </Canvas>
+
+      {!activeProduct && <div className="crosshair" aria-hidden="true" />}
+      {!activeProduct && hoveredProductId && (
+        <div className="inspect-prompt">Click to Inspect</div>
+      )}
+      <ProductPanel product={activeProduct} onClose={() => setActiveProduct(null)} />
+    </>
   )
 }
 
