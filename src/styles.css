@@ -67,24 +67,53 @@ select {
   pointer-events: none;
 }
 
-.audio-toggle {
+.audio-controls {
   position: fixed;
   top: clamp(14px, 2vw, 24px);
   right: clamp(14px, 2vw, 24px);
   z-index: 18;
-  min-width: 84px;
-  min-height: 38px;
-  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
   color: #f8f8f8;
   background: rgb(0 0 0 / 0.68);
   border: 1px solid rgb(255 255 255 / 0.16);
   border-radius: 7px;
-  cursor: pointer;
+  cursor: auto;
   backdrop-filter: blur(14px);
+}
+
+.audio-toggle {
+  min-width: 84px;
+  min-height: 38px;
+  padding: 0 14px;
+  color: #f8f8f8;
+  background: rgb(255 255 255 / 0.05);
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 7px;
+  cursor: pointer;
 }
 
 .audio-toggle:hover {
   background: rgb(255 255 255 / 0.1);
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #cfcfcf;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.volume-control input {
+  width: 104px;
+  accent-color: #ffffff;
+  cursor: pointer;
 }
 
 .eyebrow {
@@ -362,9 +391,20 @@ h1 {
     display: block;
   }
 
-  .audio-toggle {
+  .audio-controls {
     top: 12px;
     right: 12px;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .volume-control {
+    justify-content: space-between;
+  }
+
+  .volume-control input {
+    width: 96px;
   }
 
   .crosshair {
