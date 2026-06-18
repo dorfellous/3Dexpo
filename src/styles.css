@@ -67,6 +67,26 @@ select {
   pointer-events: none;
 }
 
+.audio-toggle {
+  position: fixed;
+  top: clamp(14px, 2vw, 24px);
+  right: clamp(14px, 2vw, 24px);
+  z-index: 18;
+  min-width: 84px;
+  min-height: 38px;
+  padding: 0 14px;
+  color: #f8f8f8;
+  background: rgb(0 0 0 / 0.68);
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 7px;
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+}
+
+.audio-toggle:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: #a8a8a8;
@@ -340,6 +360,11 @@ h1 {
 
   .touch-controls {
     display: block;
+  }
+
+  .audio-toggle {
+    top: 12px;
+    right: 12px;
   }
 
   .crosshair {
