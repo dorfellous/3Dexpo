@@ -9,6 +9,13 @@ const products = [
     position: [8.776, 0.45, -41.5],
     rotation: [0, Math.PI, 0],
     scale: 1,
+    hoverHeight: 0.25,
+    autoRotate: true,
+    rotationSpeed: 0.45,
+    light: true,
+    lightIntensity: 2.4,
+    lightColor: '#e6ebff',
+    lightPosition: [0, 2.8, 1.4],
     whatsappMessage: '',
   },
 ]
