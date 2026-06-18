@@ -13,6 +13,7 @@ import products from './data/products'
 
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
 const AMBIENCE_PATH = `${import.meta.env.BASE_URL}audio/ambience.mp3`
+const IMPACT_PATH = `${import.meta.env.BASE_URL}audio/impact.mp3`
 const WHATSAPP_NUMBER = '972000000000'
 const EYE_HEIGHT = 1.65
 const START_POSITION = [8.776, 1.650, -45.208]
@@ -24,10 +25,13 @@ const FLOOR_RAY_DISTANCE = 4
 const MAX_STEP_HEIGHT = 0.45
 const PRODUCT_INTERACTION_DISTANCE = 6
 const INTRO_TEXT = 'Dor Fellous'
-const INTRO_TEXT_POSITION = [8.776, 5.8, -39.2]
-const INTRO_TEXT_IMPACT_Y = 0.36
+const INTRO_TEXT_POSITION = [8.776, 8.4, -39.2]
+const INTRO_TEXT_IMPACT_Y = 0.14
 const INTRO_TEXT_SCALE = 0.82
-const INTRO_FALL_SPEED = 4.6
+const INTRO_GRAVITY = 18
+const INTRO_START_DELAY = 0.18
+const IMPACT_SHAKE_DURATION = 0.72
+const IMPACT_SHAKE_STRENGTH = 0.085
 
 class ModelErrorBoundary extends Component {
   constructor(props) {
@@ -104,15 +108,20 @@ function ProductFallback({ highlighted = false }) {
 
 function AmbientAudio({ started, muted }) {
   const audioRef = useRef(null)
+  const impactRef = useRef(null)
 
   useEffect(() => {
     if (!audioRef.current) {
       return
     }
 
-    audioRef.current.volume = 0.34
+    audioRef.current.volume = 0.24
     audioRef.current.loop = true
     audioRef.current.muted = muted
+    if (impactRef.current) {
+      impactRef.current.volume = 0.42
+      impactRef.current.muted = muted
+    }
   }, [muted])
 
   useEffect(() => {
@@ -120,10 +129,36 @@ function AmbientAudio({ started, muted }) {
       return
     }
 
-    audioRef.current.play().catch(() => {})
+    audioRef.current.play().catch(() => {
+      console.warn(`Ambience audio could not play. Confirm ${AMBIENCE_PATH} exists.`)
+    })
   }, [started])
 
-  return <audio ref={audioRef} src={AMBIENCE_PATH} preload="auto" />
+  useEffect(() => {
+    const handleImpact = () => {
+      if (!impactRef.current) {
+        return
+      }
+
+      impactRef.current.currentTime = 0
+      impactRef.current.play().catch(() => {
+        console.warn(`Impact audio could not play. Confirm ${IMPACT_PATH} exists.`)
+      })
+    }
+
+    window.addEventListener('dor-intro-impact', handleImpact)
+
+    return () => {
+      window.removeEventListener('dor-intro-impact', handleImpact)
+    }
+  }, [])
+
+  return (
+    <>
+      <audio ref={audioRef} src={AMBIENCE_PATH} preload="auto" />
+      <audio ref={impactRef} src={IMPACT_PATH} preload="auto" />
+    </>
+  )
 }
 
 function FloorFog() {
@@ -405,53 +440,120 @@ function CurvedHorizon() {
   )
 }
 
-function IntroTextImpact() {
-  const textRef = useRef(null)
-  const [impacted, setImpacted] = useState(false)
+function CameraImpactShake({ impactCount }) {
+  const { camera } = useThree()
+  const shakeTime = useRef(0)
+  const previousOffset = useRef(new Vector3())
+
+  useEffect(() => {
+    if (impactCount > 0) {
+      camera.position.sub(previousOffset.current)
+      previousOffset.current.set(0, 0, 0)
+      shakeTime.current = IMPACT_SHAKE_DURATION
+    }
+  }, [camera, impactCount])
 
   useFrame((_, delta) => {
-    if (!textRef.current || impacted) {
+    if (previousOffset.current.lengthSq() > 0) {
+      camera.position.sub(previousOffset.current)
+      previousOffset.current.set(0, 0, 0)
+    }
+
+    if (shakeTime.current <= 0) {
       return
     }
 
-    textRef.current.position.y = Math.max(
-      INTRO_TEXT_IMPACT_Y,
-      textRef.current.position.y - INTRO_FALL_SPEED * delta,
-    )
+    shakeTime.current = Math.max(0, shakeTime.current - delta)
+    const progress = shakeTime.current / IMPACT_SHAKE_DURATION
+    const strength = IMPACT_SHAKE_STRENGTH * progress * progress
 
-    if (textRef.current.position.y <= INTRO_TEXT_IMPACT_Y + 0.001) {
+    previousOffset.current.set(
+      (Math.random() - 0.5) * strength,
+      (Math.random() - 0.5) * strength * 0.65,
+      (Math.random() - 0.5) * strength,
+    )
+    camera.position.add(previousOffset.current)
+  })
+
+  return null
+}
+
+function IntroTextImpact({ started, onImpact }) {
+  const groupRef = useRef(null)
+  const velocity = useRef(0)
+  const elapsedAfterStart = useRef(0)
+  const [impacted, setImpacted] = useState(false)
+
+  useEffect(() => {
+    if (!groupRef.current) {
+      return
+    }
+
+    groupRef.current.position.set(...INTRO_TEXT_POSITION)
+    velocity.current = 0
+    elapsedAfterStart.current = 0
+    setImpacted(false)
+  }, [])
+
+  useFrame((_, delta) => {
+    if (!groupRef.current || !started || impacted) {
+      return
+    }
+
+    elapsedAfterStart.current += delta
+
+    if (elapsedAfterStart.current < INTRO_START_DELAY) {
+      return
+    }
+
+    velocity.current += INTRO_GRAVITY * delta
+    groupRef.current.position.y -= velocity.current * delta
+
+    if (groupRef.current.position.y <= INTRO_TEXT_IMPACT_Y) {
+      groupRef.current.position.y = INTRO_TEXT_IMPACT_Y
+      groupRef.current.rotation.x = -0.1
       setImpacted(true)
+      onImpact()
     }
   })
 
   return (
     <group>
       {impacted && <ImpactCrack />}
-      <Text3D
-        ref={textRef}
-        font={helvetikerBold}
-        position={INTRO_TEXT_POSITION}
-        rotation={[0, Math.PI, 0]}
-        scale={INTRO_TEXT_SCALE}
-        size={0.78}
-        height={0.24}
-        bevelEnabled
-        bevelSize={0.035}
-        bevelThickness={0.018}
-        bevelSegments={4}
-        curveSegments={16}
-        castShadow
-        receiveShadow
-      >
-        {INTRO_TEXT}
-        <meshStandardMaterial
-          color="#030303"
-          roughness={0.56}
-          metalness={0.18}
-          emissive="#000000"
-        />
-      </Text3D>
+      <group ref={groupRef} rotation={[0, Math.PI, 0]} scale={INTRO_TEXT_SCALE}>
+        <Suspense fallback={<IntroTextFallback />}>
+          <Text3D
+            font={helvetikerBold}
+            size={0.78}
+            height={0.24}
+            bevelEnabled
+            bevelSize={0.035}
+            bevelThickness={0.018}
+            bevelSegments={4}
+            curveSegments={16}
+            castShadow
+            receiveShadow
+          >
+            {INTRO_TEXT}
+            <meshStandardMaterial
+              color="#030303"
+              roughness={0.56}
+              metalness={0.18}
+              emissive="#000000"
+            />
+          </Text3D>
+        </Suspense>
+      </group>
     </group>
+  )
+}
+
+function IntroTextFallback() {
+  return (
+    <mesh castShadow receiveShadow>
+      <boxGeometry args={[4.6, 0.82, 0.26]} />
+      <meshStandardMaterial color="#030303" roughness={0.58} metalness={0.18} />
+    </mesh>
   )
 }
 
@@ -459,15 +561,21 @@ function ImpactCrack() {
   return (
     <group position={[INTRO_TEXT_POSITION[0], 0.026, INTRO_TEXT_POSITION[2] + 0.55]}>
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[1.42, 64]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.66} depthWrite={false} />
+        <circleGeometry args={[1.75, 72]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.82} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[1.18, 1.92, 72]} />
+        <meshBasicMaterial color="#050505" transparent opacity={0.7} depthWrite={false} />
       </mesh>
       {[
-        [0, 0, 0, 1.8, 0.025, 0.12],
-        [0.08, 0, 0.08, 1.45, 0.018, 1.18],
-        [-0.05, 0, -0.02, 1.28, 0.016, -1.0],
-        [0.1, 0, -0.04, 0.96, 0.014, 2.35],
-        [-0.1, 0, 0.14, 1.12, 0.014, -2.35],
+        [0, 0, 0, 2.35, 0.032, 0.12],
+        [0.08, 0, 0.08, 1.85, 0.023, 1.18],
+        [-0.05, 0, -0.02, 1.68, 0.021, -1.0],
+        [0.1, 0, -0.04, 1.36, 0.018, 2.35],
+        [-0.1, 0, 0.14, 1.55, 0.018, -2.35],
+        [0.22, 0, 0.24, 1.12, 0.014, 2.86],
+        [-0.28, 0, -0.28, 1.02, 0.014, -2.78],
       ].map(([x, y, z, sx, sz, rotation], index) => (
         <mesh key={index} position={[x, y + index * 0.003, z]} rotation={[-Math.PI / 2, 0, rotation]}>
           <planeGeometry args={[sx, sz]} />
@@ -822,12 +930,18 @@ function ProductPanel({ product, onClose }) {
   )
 }
 
-function Experience() {
+function Experience({ introStarted }) {
   const [collisionMeshes, setCollisionMeshes] = useState([])
   const [hoveredProductId, setHoveredProductId] = useState(null)
   const [activeProduct, setActiveProduct] = useState(null)
+  const [impactCount, setImpactCount] = useState(0)
   const productGroups = useRef(new Map())
   const controlsEnabled = !activeProduct
+
+  const handleIntroImpact = () => {
+    window.dispatchEvent(new Event('dor-intro-impact'))
+    setImpactCount((count) => count + 1)
+  }
 
   const registerProductGroup = (id, group) => {
     productGroups.current.set(id, group)
@@ -866,7 +980,8 @@ function Experience() {
         <pointLight intensity={1.1} position={[-4, 1.2, -2.5]} color="#ffffff" />
         <CurvedHorizon />
         <FloorFog />
-        <IntroTextImpact />
+        <IntroTextImpact started={introStarted} onImpact={handleIntroImpact} />
+        <CameraImpactShake impactCount={impactCount} />
 
         <Suspense fallback={<Loader />}>
           <ModelErrorBoundary fallback={<DemoEnvironment />}>
@@ -927,7 +1042,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <AmbientAudio started={audioStarted} muted={muted} />
-      <Experience />
+      <Experience introStarted={audioStarted} />
 
       <section className="ui-overlay" aria-label="3Dexpo controls and status">
         <div>
