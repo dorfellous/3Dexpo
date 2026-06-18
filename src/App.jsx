@@ -11,6 +11,7 @@ import {
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
 const EYE_HEIGHT = 1.65
 const START_POSITION = [8.776, 1.650, -45.208]
+const START_YAW = Math.PI
 const BODY_RADIUS = 0.35
 const MIN_FLOOR_Y = 0
 const FLOOR_RAY_HEIGHT = 1.2
@@ -129,7 +130,7 @@ function FirstPersonControls({ collisionMeshes }) {
 
   useEffect(() => {
     camera.position.set(...START_POSITION)
-    camera.rotation.set(0, 0, 0, 'YXZ')
+    camera.rotation.set(0, START_YAW, 0, 'YXZ')
 
     const canvas = gl.domElement
     const updateKey = (event, isPressed) => {
