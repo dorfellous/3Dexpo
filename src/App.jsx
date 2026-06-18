@@ -15,6 +15,9 @@ const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
 const AMBIENCE_PATH = `${import.meta.env.BASE_URL}audio/ambience.mp3`
 const IMPACT_PATH = `${import.meta.env.BASE_URL}audio/impact.mp3`
 const WHATSAPP_NUMBER = '972000000000'
+const AUDIO_MUTE_STORAGE_KEY = '3dexpo-audio-muted'
+const DEFAULT_AMBIENCE_VOLUME = 0.18
+const IMPACT_VOLUME = 0.42
 const EYE_HEIGHT = 1.65
 const START_POSITION = [8.776, 1.650, -45.208]
 const START_YAW = Math.PI
@@ -106,7 +109,7 @@ function ProductFallback({ highlighted = false }) {
   )
 }
 
-function AmbientAudio({ started, muted }) {
+function AmbientAudio({ started, muted, volume }) {
   const audioRef = useRef(null)
   const impactRef = useRef(null)
 
@@ -115,14 +118,15 @@ function AmbientAudio({ started, muted }) {
       return
     }
 
-    audioRef.current.volume = 0.24
+    audioRef.current.volume = volume
     audioRef.current.loop = true
     audioRef.current.muted = muted
     if (impactRef.current) {
-      impactRef.current.volume = 0.42
+      impactRef.current.volume = IMPACT_VOLUME
+      impactRef.current.loop = false
       impactRef.current.muted = muted
     }
-  }, [muted])
+  }, [muted, volume])
 
   useEffect(() => {
     if (!started || !audioRef.current) {
@@ -1021,7 +1025,14 @@ function Experience({ introStarted }) {
 
 export default function App() {
   const [audioStarted, setAudioStarted] = useState(false)
-  const [muted, setMuted] = useState(false)
+  const [muted, setMuted] = useState(() => {
+    try {
+      return window.localStorage.getItem(AUDIO_MUTE_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const [ambienceVolume, setAmbienceVolume] = useState(DEFAULT_AMBIENCE_VOLUME)
 
   useEffect(() => {
     if (audioStarted) {
@@ -1039,9 +1050,17 @@ export default function App() {
     }
   }, [audioStarted])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUDIO_MUTE_STORAGE_KEY, String(muted))
+    } catch {
+      // localStorage can be unavailable in private browsing modes.
+    }
+  }, [muted])
+
   return (
     <main className="app-shell">
-      <AmbientAudio started={audioStarted} muted={muted} />
+      <AmbientAudio started={audioStarted} muted={muted} volume={ambienceVolume} />
       <Experience introStarted={audioStarted} />
 
       <section className="ui-overlay" aria-label="3Dexpo controls and status">
@@ -1051,9 +1070,23 @@ export default function App() {
         </div>
         <p className="status">Click to look. Use WASD or arrows to walk. Hold Shift to move faster.</p>
       </section>
-      <button className="audio-toggle" type="button" onClick={() => setMuted((isMuted) => !isMuted)}>
-        {muted ? 'Unmute' : 'Mute'}
-      </button>
+      <div className="audio-controls" aria-label="Audio controls">
+        <button className="audio-toggle" type="button" onClick={() => setMuted((isMuted) => !isMuted)}>
+          {muted ? 'Unmute' : 'Mute'}
+        </button>
+        <label className="volume-control">
+          <span>Volume</span>
+          <input
+            aria-label="Ambience volume"
+            type="range"
+            min="0"
+            max="0.25"
+            step="0.01"
+            value={ambienceVolume}
+            onChange={(event) => setAmbienceVolume(Number(event.target.value))}
+          />
+        </label>
+      </div>
     </main>
   )
 }
