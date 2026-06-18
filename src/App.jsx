@@ -5,11 +5,14 @@ import {
   ContactShadows,
   Environment,
   Html,
+  Text3D,
   useGLTF,
 } from '@react-three/drei'
+import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import products from './data/products'
 
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
+const AMBIENCE_PATH = `${import.meta.env.BASE_URL}audio/ambience.mp3`
 const WHATSAPP_NUMBER = '972000000000'
 const EYE_HEIGHT = 1.65
 const START_POSITION = [8.776, 1.650, -45.208]
@@ -20,6 +23,11 @@ const FLOOR_RAY_HEIGHT = 1.2
 const FLOOR_RAY_DISTANCE = 4
 const MAX_STEP_HEIGHT = 0.45
 const PRODUCT_INTERACTION_DISTANCE = 6
+const INTRO_TEXT = 'Dor Fellous'
+const INTRO_TEXT_POSITION = [8.776, 5.8, -39.2]
+const INTRO_TEXT_IMPACT_Y = 0.36
+const INTRO_TEXT_SCALE = 0.82
+const INTRO_FALL_SPEED = 4.6
 
 class ModelErrorBoundary extends Component {
   constructor(props) {
@@ -94,6 +102,72 @@ function ProductFallback({ highlighted = false }) {
   )
 }
 
+function AmbientAudio({ started, muted }) {
+  const audioRef = useRef(null)
+
+  useEffect(() => {
+    if (!audioRef.current) {
+      return
+    }
+
+    audioRef.current.volume = 0.34
+    audioRef.current.loop = true
+    audioRef.current.muted = muted
+  }, [muted])
+
+  useEffect(() => {
+    if (!started || !audioRef.current) {
+      return
+    }
+
+    audioRef.current.play().catch(() => {})
+  }, [started])
+
+  return <audio ref={audioRef} src={AMBIENCE_PATH} preload="auto" />
+}
+
+function FloorFog() {
+  const fogRef = useRef(null)
+
+  useFrame(({ clock }) => {
+    if (!fogRef.current) {
+      return
+    }
+
+    const elapsed = clock.getElapsedTime()
+    fogRef.current.children.forEach((child, index) => {
+      child.position.x += Math.sin(elapsed * 0.18 + index) * 0.0008
+      child.material.opacity = 0.065 + Math.sin(elapsed * 0.42 + index * 1.7) * 0.018
+    })
+  })
+
+  return (
+    <group ref={fogRef} position={[START_POSITION[0], 0.055, START_POSITION[2] + 4.2]}>
+      {[
+        [-3.8, 0, -2.4, 5.4, 1.7, 0.18],
+        [1.6, 0, -1.6, 6.2, 2.1, -0.08],
+        [-0.4, 0, 1.6, 7.5, 2.4, 0.05],
+        [3.2, 0, 2.8, 5.6, 1.8, -0.16],
+      ].map(([x, y, z, sx, sz, rotation], index) => (
+        <mesh
+          key={index}
+          position={[x, y + index * 0.012, z]}
+          rotation={[-Math.PI / 2, 0, rotation]}
+          scale={[sx, sz, 1]}
+        >
+          <circleGeometry args={[1, 48]} />
+          <meshBasicMaterial
+            color="#6f7684"
+            transparent
+            opacity={0.06}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
 function ProductAsset({ product, highlighted = false }) {
   const assetPath = resolvePublicAssetPath(product.model)
   const gltf = useGLTF(assetPath)
@@ -132,7 +206,15 @@ function ProductHighlight({ scale = 1 }) {
 
 function ProductNode({ product, highlighted, registerProductGroup }) {
   const groupRef = useRef(null)
+  const displayRef = useRef(null)
+  const spotLightRef = useRef(null)
+  const lightTargetRef = useRef(null)
   const hasModel = Boolean(product.model)
+  const hoverHeight = product.hoverHeight ?? 0.18
+  const rotationSpeed = product.rotationSpeed ?? 0.35
+  const shouldAutoRotate = product.autoRotate ?? true
+  const shouldLightProduct = product.light ?? true
+  const lightPosition = product.lightPosition ?? [0, 2.6, 1.35]
 
   useEffect(() => {
     if (!groupRef.current) {
@@ -142,6 +224,19 @@ function ProductNode({ product, highlighted, registerProductGroup }) {
     return registerProductGroup(product.id, groupRef.current)
   }, [product.id, registerProductGroup])
 
+  useEffect(() => {
+    if (spotLightRef.current && lightTargetRef.current) {
+      spotLightRef.current.target = lightTargetRef.current
+      lightTargetRef.current.updateMatrixWorld()
+    }
+  }, [])
+
+  useFrame((_, delta) => {
+    if (displayRef.current && shouldAutoRotate) {
+      displayRef.current.rotation.y += rotationSpeed * delta
+    }
+  })
+
   return (
     <group
       ref={groupRef}
@@ -150,25 +245,39 @@ function ProductNode({ product, highlighted, registerProductGroup }) {
       scale={product.scale}
       userData={{ productId: product.id }}
     >
-      {hasModel ? (
-        <ModelErrorBoundary
-          fallback={
-            <>
-              <ProductFallback highlighted={highlighted} />
-              {highlighted && <ProductHighlight scale={product.scale} />}
-            </>
-          }
-        >
-          <Suspense fallback={<ProductFallback highlighted={highlighted} />}>
-            <ProductAsset product={product} highlighted={highlighted} />
-          </Suspense>
-        </ModelErrorBoundary>
-      ) : (
-        <>
-          <ProductFallback highlighted={highlighted} />
-          {highlighted && <ProductHighlight scale={product.scale} />}
-        </>
+      {shouldLightProduct && (
+        <spotLight
+          ref={spotLightRef}
+          castShadow
+          angle={0.42}
+          penumbra={0.72}
+          intensity={product.lightIntensity ?? 2.1}
+          color={product.lightColor ?? '#e6ebff'}
+          position={lightPosition}
+        />
       )}
+      <object3D ref={lightTargetRef} position={[0, hoverHeight + 0.62, 0]} />
+      <group ref={displayRef} position={[0, hoverHeight, 0]}>
+        {hasModel ? (
+          <ModelErrorBoundary
+            fallback={
+              <>
+                <ProductFallback highlighted={highlighted} />
+                {highlighted && <ProductHighlight scale={product.scale} />}
+              </>
+            }
+          >
+            <Suspense fallback={<ProductFallback highlighted={highlighted} />}>
+              <ProductAsset product={product} highlighted={highlighted} />
+            </Suspense>
+          </ModelErrorBoundary>
+        ) : (
+          <>
+            <ProductFallback highlighted={highlighted} />
+            {highlighted && <ProductHighlight scale={product.scale} />}
+          </>
+        )}
+      </group>
     </group>
   )
 }
@@ -293,6 +402,79 @@ function CurvedHorizon() {
       <sphereGeometry args={[12, 64, 32, 0, Math.PI * 2, 0.12, 1.18]} />
       <meshBasicMaterial color="#090909" side={BackSide} transparent opacity={0.86} />
     </mesh>
+  )
+}
+
+function IntroTextImpact() {
+  const textRef = useRef(null)
+  const [impacted, setImpacted] = useState(false)
+
+  useFrame((_, delta) => {
+    if (!textRef.current || impacted) {
+      return
+    }
+
+    textRef.current.position.y = Math.max(
+      INTRO_TEXT_IMPACT_Y,
+      textRef.current.position.y - INTRO_FALL_SPEED * delta,
+    )
+
+    if (textRef.current.position.y <= INTRO_TEXT_IMPACT_Y + 0.001) {
+      setImpacted(true)
+    }
+  })
+
+  return (
+    <group>
+      {impacted && <ImpactCrack />}
+      <Text3D
+        ref={textRef}
+        font={helvetikerBold}
+        position={INTRO_TEXT_POSITION}
+        rotation={[0, Math.PI, 0]}
+        scale={INTRO_TEXT_SCALE}
+        size={0.78}
+        height={0.24}
+        bevelEnabled
+        bevelSize={0.035}
+        bevelThickness={0.018}
+        bevelSegments={4}
+        curveSegments={16}
+        castShadow
+        receiveShadow
+      >
+        {INTRO_TEXT}
+        <meshStandardMaterial
+          color="#030303"
+          roughness={0.56}
+          metalness={0.18}
+          emissive="#000000"
+        />
+      </Text3D>
+    </group>
+  )
+}
+
+function ImpactCrack() {
+  return (
+    <group position={[INTRO_TEXT_POSITION[0], 0.026, INTRO_TEXT_POSITION[2] + 0.55]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[1.42, 64]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.66} depthWrite={false} />
+      </mesh>
+      {[
+        [0, 0, 0, 1.8, 0.025, 0.12],
+        [0.08, 0, 0.08, 1.45, 0.018, 1.18],
+        [-0.05, 0, -0.02, 1.28, 0.016, -1.0],
+        [0.1, 0, -0.04, 0.96, 0.014, 2.35],
+        [-0.1, 0, 0.14, 1.12, 0.014, -2.35],
+      ].map(([x, y, z, sx, sz, rotation], index) => (
+        <mesh key={index} position={[x, y + index * 0.003, z]} rotation={[-Math.PI / 2, 0, rotation]}>
+          <planeGeometry args={[sx, sz]} />
+          <meshBasicMaterial color="#000000" transparent opacity={0.84} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
   )
 }
 
@@ -683,6 +865,8 @@ function Experience() {
         <pointLight intensity={1.4} position={[3, 1.8, -3.5]} color="#5f7cff" />
         <pointLight intensity={1.1} position={[-4, 1.2, -2.5]} color="#ffffff" />
         <CurvedHorizon />
+        <FloorFog />
+        <IntroTextImpact />
 
         <Suspense fallback={<Loader />}>
           <ModelErrorBoundary fallback={<DemoEnvironment />}>
@@ -721,8 +905,28 @@ function Experience() {
 }
 
 export default function App() {
+  const [audioStarted, setAudioStarted] = useState(false)
+  const [muted, setMuted] = useState(false)
+
+  useEffect(() => {
+    if (audioStarted) {
+      return undefined
+    }
+
+    const startAudio = () => setAudioStarted(true)
+
+    window.addEventListener('pointerdown', startAudio, { once: true })
+    window.addEventListener('keydown', startAudio, { once: true })
+
+    return () => {
+      window.removeEventListener('pointerdown', startAudio)
+      window.removeEventListener('keydown', startAudio)
+    }
+  }, [audioStarted])
+
   return (
     <main className="app-shell">
+      <AmbientAudio started={audioStarted} muted={muted} />
       <Experience />
 
       <section className="ui-overlay" aria-label="3Dexpo controls and status">
@@ -732,6 +936,9 @@ export default function App() {
         </div>
         <p className="status">Click to look. Use WASD or arrows to walk. Hold Shift to move faster.</p>
       </section>
+      <button className="audio-toggle" type="button" onClick={() => setMuted((isMuted) => !isMuted)}>
+        {muted ? 'Unmute' : 'Mute'}
+      </button>
     </main>
   )
 }
