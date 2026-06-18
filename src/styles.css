@@ -158,6 +158,52 @@ h1 {
   left: 90px;
 }
 
+.debug-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  width: min(280px, calc(100vw - 32px));
+  padding: 12px;
+  color: #f8f8f8;
+  background: rgb(0 0 0 / 0.74);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 8px;
+  backdrop-filter: blur(14px);
+}
+
+.debug-toggle,
+.debug-copy {
+  width: 100%;
+  padding: 9px 10px;
+  color: #f8f8f8;
+  background: rgb(255 255 255 / 0.08);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.debug-toggle--active {
+  color: #050505;
+  background: #ffffff;
+}
+
+.debug-coordinates,
+.debug-hint {
+  margin: 0;
+  color: #d8d8d8;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.debug-hint {
+  color: #ffffff;
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -186,5 +232,12 @@ h1 {
 
   .touch-controls {
     display: block;
+  }
+
+  .debug-panel {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
   }
 }

@@ -102,7 +102,7 @@ function CurvedHorizon() {
   )
 }
 
-function FirstPersonControls({ collisionMeshes }) {
+function FirstPersonControls({ collisionMeshes, debugNoClip, onCoordinatesChange }) {
   const { camera, gl } = useThree()
   const keys = useRef({})
   const velocity = useRef(new Vector3())
@@ -125,6 +125,10 @@ function FirstPersonControls({ collisionMeshes }) {
   useEffect(() => {
     collisionMeshesRef.current = collisionMeshes
   }, [collisionMeshes])
+
+  useEffect(() => {
+    velocity.current.set(0, 0, 0)
+  }, [debugNoClip])
 
   useEffect(() => {
     camera.position.set(0, EYE_HEIGHT, 4.5)
@@ -212,7 +216,11 @@ function FirstPersonControls({ collisionMeshes }) {
   }, [camera, gl.domElement])
 
   const movementHitsCollider = (fromPosition, movement) => {
-    if (movement.lengthSq() === 0 || collisionMeshesRef.current.length === 0) {
+    if (
+      debugNoClip ||
+      movement.lengthSq() === 0 ||
+      collisionMeshesRef.current.length === 0
+    ) {
       return false
     }
 
@@ -272,6 +280,11 @@ function FirstPersonControls({ collisionMeshes }) {
   const applyCollidedMovement = (delta) => {
     pendingMove.current.copy(velocity.current).multiplyScalar(delta)
 
+    if (debugNoClip) {
+      camera.position.add(pendingMove.current)
+      return
+    }
+
     testMove.current.set(pendingMove.current.x, 0, 0)
     if (!movementHitsCollider(camera.position, testMove.current)) {
       camera.position.add(testMove.current)
@@ -299,6 +312,9 @@ function FirstPersonControls({ collisionMeshes }) {
     const inputZ =
       Number(Boolean(pressed.KeyW || pressed.ArrowUp)) -
       Number(Boolean(pressed.KeyS || pressed.ArrowDown))
+    const inputY = debugNoClip
+      ? Number(Boolean(pressed.KeyE)) - Number(Boolean(pressed.KeyQ))
+      : 0
     const isSprinting = Boolean(pressed.ShiftLeft || pressed.ShiftRight)
     const speed = isSprinting ? 6.2 : 3.1
 
@@ -310,6 +326,7 @@ function FirstPersonControls({ collisionMeshes }) {
     moveDirection.current.set(0, 0, 0)
     moveDirection.current.addScaledVector(forward.current, inputZ)
     moveDirection.current.addScaledVector(right.current, inputX)
+    moveDirection.current.y = inputY
 
     if (moveDirection.current.lengthSq() > 0) {
       moveDirection.current.normalize().multiplyScalar(speed)
@@ -318,6 +335,11 @@ function FirstPersonControls({ collisionMeshes }) {
     const response = 1 - Math.exp(-12 * delta)
     velocity.current.lerp(moveDirection.current, response)
     applyCollidedMovement(delta)
+    onCoordinatesChange?.([
+      Number(camera.position.x.toFixed(3)),
+      Number(camera.position.y.toFixed(3)),
+      Number(camera.position.z.toFixed(3)),
+    ])
   })
 
   const setVirtualKey = (code, isPressed) => {
@@ -370,51 +392,79 @@ function FirstPersonControls({ collisionMeshes }) {
 
 function Experience() {
   const [collisionMeshes, setCollisionMeshes] = useState([])
+  const [debugNoClip, setDebugNoClip] = useState(false)
+  const [playerCoordinates, setPlayerCoordinates] = useState([0, EYE_HEIGHT, 4.5])
+  const coordinatesText = `[${playerCoordinates.map((value) => value.toFixed(3)).join(', ')}]`
+
+  const copyCoordinates = async () => {
+    await navigator.clipboard?.writeText(coordinatesText)
+  }
 
   return (
-    <Canvas
-      shadows
-      camera={{ position: [0, EYE_HEIGHT, 4.5], fov: 68 }}
-      dpr={[1, 2]}
-      gl={{ antialias: true, alpha: false }}
-    >
-      <color attach="background" args={['#050505']} />
-      <fog attach="fog" args={['#050505', 8, 30]} />
-      <ambientLight intensity={0.22} />
-      <directionalLight
-        castShadow
-        intensity={2.8}
-        position={[4.5, 7, 3.2]}
-        shadow-mapSize={[2048, 2048]}
-      />
-      <spotLight
-        castShadow
-        angle={0.32}
-        penumbra={0.8}
-        intensity={5.4}
-        position={[-3.8, 5.8, 1.5]}
-        color="#d9e4ff"
-      />
-      <pointLight intensity={1.4} position={[3, 1.8, -3.5]} color="#5f7cff" />
-      <pointLight intensity={1.1} position={[-4, 1.2, -2.5]} color="#ffffff" />
-      <CurvedHorizon />
-
-      <Suspense fallback={<Loader />}>
-        <ModelErrorBoundary fallback={<DemoEnvironment />}>
-          <SceneModel onCollisionMeshes={setCollisionMeshes} />
-        </ModelErrorBoundary>
-        <Environment preset="night" />
-        <ContactShadows
-          opacity={0.35}
-          scale={12}
-          blur={2.8}
-          far={8}
-          position={[0, -0.03, 0]}
+    <>
+      <Canvas
+        shadows
+        camera={{ position: [0, EYE_HEIGHT, 4.5], fov: 68 }}
+        dpr={[1, 2]}
+        gl={{ antialias: true, alpha: false }}
+      >
+        <color attach="background" args={['#050505']} />
+        <fog attach="fog" args={['#050505', 8, 30]} />
+        <ambientLight intensity={0.22} />
+        <directionalLight
+          castShadow
+          intensity={2.8}
+          position={[4.5, 7, 3.2]}
+          shadow-mapSize={[2048, 2048]}
         />
-      </Suspense>
+        <spotLight
+          castShadow
+          angle={0.32}
+          penumbra={0.8}
+          intensity={5.4}
+          position={[-3.8, 5.8, 1.5]}
+          color="#d9e4ff"
+        />
+        <pointLight intensity={1.4} position={[3, 1.8, -3.5]} color="#5f7cff" />
+        <pointLight intensity={1.1} position={[-4, 1.2, -2.5]} color="#ffffff" />
+        <CurvedHorizon />
 
-      <FirstPersonControls collisionMeshes={collisionMeshes} />
-    </Canvas>
+        <Suspense fallback={<Loader />}>
+          <ModelErrorBoundary fallback={<DemoEnvironment />}>
+            <SceneModel onCollisionMeshes={setCollisionMeshes} />
+          </ModelErrorBoundary>
+          <Environment preset="night" />
+          <ContactShadows
+            opacity={0.35}
+            scale={12}
+            blur={2.8}
+            far={8}
+            position={[0, -0.03, 0]}
+          />
+        </Suspense>
+
+        <FirstPersonControls
+          collisionMeshes={collisionMeshes}
+          debugNoClip={debugNoClip}
+          onCoordinatesChange={setPlayerCoordinates}
+        />
+      </Canvas>
+
+      <aside className="debug-panel" aria-label="Spawn point debug controls">
+        <button
+          className={debugNoClip ? 'debug-toggle debug-toggle--active' : 'debug-toggle'}
+          type="button"
+          onClick={() => setDebugNoClip((isEnabled) => !isEnabled)}
+        >
+          DEBUG_NO_CLIP: {debugNoClip ? 'ON' : 'OFF'}
+        </button>
+        <p className="debug-coordinates">{coordinatesText}</p>
+        <button className="debug-copy" type="button" onClick={copyCoordinates}>
+          Copy Coordinates
+        </button>
+        {debugNoClip && <p className="debug-hint">No-clip active. Q down, E up.</p>}
+      </aside>
+    </>
   )
 }
 
