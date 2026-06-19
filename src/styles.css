@@ -116,6 +116,23 @@ select {
   backdrop-filter: blur(16px);
 }
 
+.spotlight-editor {
+  position: fixed;
+  top: clamp(74px, 9vw, 92px);
+  left: clamp(14px, 2vw, 24px);
+  z-index: 22;
+  width: min(380px, calc(100vw - 28px));
+  max-height: calc(100svh - 112px);
+  overflow: auto;
+  padding: 14px;
+  color: #f8f8f8;
+  background: rgb(0 0 0 / 0.78);
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 8px;
+  cursor: auto;
+  backdrop-filter: blur(16px);
+}
+
 .inventory-editor__header {
   display: flex;
   align-items: flex-start;
@@ -546,6 +563,14 @@ h1 {
     left: 12px;
     width: auto;
     max-height: 50svh;
+  }
+
+  .spotlight-editor {
+    top: 108px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: 42svh;
   }
 
   .crosshair {
