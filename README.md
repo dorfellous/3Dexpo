@@ -18,6 +18,47 @@ Optional texture assets can be placed in:
 public/textures/
 ```
 
+## Product inventory
+
+Place product GLB files in:
+
+```text
+public/products/
+```
+
+Then add each product to:
+
+```text
+src/data/products.js
+```
+
+Use this shape for every product:
+
+```js
+{
+  id: 'product-id',
+  name: 'Product Name',
+  description: 'Product description.',
+  price: '$000',
+  model: '/products/product.glb',
+  position: [0, 0, 0],
+  rotation: [0, 0, 0],
+  scale: 1,
+  hoverHeight: 0.25,
+  autoRotate: true,
+  rotationSpeed: 0.25,
+  light: true,
+  lightIntensity: 2.1,
+  lightColor: '#e6ebff',
+  lightPosition: [0, 2.6, 1.35],
+  whatsappMessage: '',
+}
+```
+
+The live gallery includes an Inventory / Placement Mode panel. Use it to select a product, move it in the room, adjust scale, rotation, hover, spin, and lighting, then copy a ready-to-paste `products.js` config. The browser does not write directly to GitHub.
+
+If a GLB exists in `public/products/` but does not appear in the inventory, add it manually to `src/data/products.js` using the config shape above.
+
 ## Run locally
 
 Install dependencies:
