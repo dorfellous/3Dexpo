@@ -523,7 +523,6 @@ function IntroTextImpact({ started, onImpact }) {
 
   return (
     <group>
-      {impacted && <ImpactCrack />}
       <group ref={groupRef} rotation={[0, Math.PI, 0]} scale={INTRO_TEXT_SCALE}>
         <Suspense fallback={<IntroTextFallback />}>
           <Text3D
@@ -558,35 +557,6 @@ function IntroTextFallback() {
       <boxGeometry args={[4.6, 0.82, 0.26]} />
       <meshStandardMaterial color="#030303" roughness={0.58} metalness={0.18} />
     </mesh>
-  )
-}
-
-function ImpactCrack() {
-  return (
-    <group position={[INTRO_TEXT_POSITION[0], 0.026, INTRO_TEXT_POSITION[2] + 0.55]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[1.75, 72]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.82} depthWrite={false} />
-      </mesh>
-      <mesh position={[0, 0.006, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[1.18, 1.92, 72]} />
-        <meshBasicMaterial color="#050505" transparent opacity={0.7} depthWrite={false} />
-      </mesh>
-      {[
-        [0, 0, 0, 2.35, 0.032, 0.12],
-        [0.08, 0, 0.08, 1.85, 0.023, 1.18],
-        [-0.05, 0, -0.02, 1.68, 0.021, -1.0],
-        [0.1, 0, -0.04, 1.36, 0.018, 2.35],
-        [-0.1, 0, 0.14, 1.55, 0.018, -2.35],
-        [0.22, 0, 0.24, 1.12, 0.014, 2.86],
-        [-0.28, 0, -0.28, 1.02, 0.014, -2.78],
-      ].map(([x, y, z, sx, sz, rotation], index) => (
-        <mesh key={index} position={[x, y + index * 0.003, z]} rotation={[-Math.PI / 2, 0, rotation]}>
-          <planeGeometry args={[sx, sz]} />
-          <meshBasicMaterial color="#000000" transparent opacity={0.84} depthWrite={false} />
-        </mesh>
-      ))}
-    </group>
   )
 }
 
