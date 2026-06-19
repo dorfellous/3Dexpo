@@ -59,6 +59,34 @@ The live gallery includes an Inventory / Placement Mode panel. Use it to select 
 
 If a GLB exists in `public/products/` but does not appear in the inventory, add it manually to `src/data/products.js` using the config shape above.
 
+## Spotlight inventory
+
+Permanent gallery spotlights live in:
+
+```text
+src/data/spotlights.js
+```
+
+Use this shape for every spotlight:
+
+```js
+{
+  id: 'spotlight-id',
+  name: 'Spotlight Name',
+  position: [0, 3, 0],
+  target: [0, 0, 0],
+  intensity: 1,
+  color: '#ffffff',
+  angle: 0.35,
+  penumbra: 0.5,
+  distance: 10,
+  decay: 2,
+  helper: false,
+}
+```
+
+The live gallery includes a Lighting / Spotlights panel. Use it to create or select a spotlight, place it at the camera, aim it at the selected product or a point in front of the player, adjust beam settings, then copy a ready-to-paste `spotlights.js` config. The browser does not write directly to GitHub.
+
 ## Run locally
 
 Install dependencies:
