@@ -99,6 +99,127 @@ select {
   background: rgb(255 255 255 / 0.1);
 }
 
+.placement-panel {
+  position: fixed;
+  top: clamp(74px, 9vw, 92px);
+  right: clamp(14px, 2vw, 24px);
+  z-index: 22;
+  width: min(360px, calc(100vw - 28px));
+  max-height: calc(100svh - 112px);
+  overflow: auto;
+  padding: 14px;
+  color: #f8f8f8;
+  background: rgb(0 0 0 / 0.76);
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 8px;
+  cursor: auto;
+  backdrop-filter: blur(16px);
+}
+
+.placement-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.placement-panel h2 {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.1;
+}
+
+.placement-toggle,
+.placement-grid button,
+.copy-config-button {
+  min-height: 34px;
+  color: #f8f8f8;
+  background: rgb(255 255 255 / 0.07);
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.placement-toggle {
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.placement-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: #a8a8a8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.placement-field select {
+  min-height: 36px;
+  padding: 0 10px;
+  color: #f8f8f8;
+  background: #080808;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 7px;
+}
+
+.placement-readout {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 8px;
+  margin: 7px 0;
+  color: #bcbcbc;
+  font-size: 0.78rem;
+}
+
+.placement-readout code {
+  color: #ffffff;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.placement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 13px 0;
+}
+
+.placement-grid button:hover,
+.copy-config-button:hover,
+.placement-toggle:hover {
+  background: rgb(255 255 255 / 0.12);
+}
+
+.copy-config-button {
+  width: 100%;
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.placement-copy-state {
+  margin: 0 0 8px;
+  color: #d8d8d8;
+  font-size: 0.78rem;
+}
+
+.placement-config {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  padding: 10px;
+  color: #f4f4f4;
+  background: #050505;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 7px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
 .volume-control {
   display: flex;
   align-items: center;
@@ -397,6 +518,15 @@ h1 {
     align-items: stretch;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .placement-panel {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    max-height: 48svh;
   }
 
   .volume-control {
