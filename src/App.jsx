@@ -9,7 +9,6 @@ import {
   useGLTF,
 } from '@react-three/drei'
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
-import PlacementPanel from './components/PlacementPanel'
 import products from './data/products'
 
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
@@ -322,39 +321,15 @@ function ProductNode({ product, highlighted, registerProductGroup }) {
   )
 }
 
-function ProductGallery({ hoveredProductId, registerProductGroup, productOverrides }) {
+function ProductGallery({ hoveredProductId, registerProductGroup }) {
   return products.map((product) => (
     <ProductNode
       key={product.id}
-      product={{ ...product, ...productOverrides[product.id] }}
+      product={product}
       highlighted={hoveredProductId === product.id}
       registerProductGroup={registerProductGroup}
     />
   ))
-}
-
-function CameraPlacementReporter({ onCameraUpdate }) {
-  const { camera } = useThree()
-  const direction = useRef(new Vector3())
-  const elapsedSinceUpdate = useRef(0)
-
-  useFrame((_, delta) => {
-    elapsedSinceUpdate.current += delta
-
-    if (elapsedSinceUpdate.current < 0.08) {
-      return
-    }
-
-    elapsedSinceUpdate.current = 0
-    camera.getWorldDirection(direction.current)
-    onCameraUpdate({
-      position: [camera.position.x, camera.position.y, camera.position.z],
-      yaw: camera.rotation.y,
-      direction: [direction.current.x, direction.current.y, direction.current.z],
-    })
-  })
-
-  return null
 }
 
 function ProductInteractor({ activeProduct, productGroups, onHoverProduct, onOpenProduct }) {
@@ -929,11 +904,7 @@ function ProductPanel({ product, onClose }) {
   )
 }
 
-function Experience({
-  introStarted,
-  productOverrides,
-  onCameraUpdate,
-}) {
+function Experience({ introStarted }) {
   const [collisionMeshes, setCollisionMeshes] = useState([])
   const [hoveredProductId, setHoveredProductId] = useState(null)
   const [activeProduct, setActiveProduct] = useState(null)
@@ -993,7 +964,6 @@ function Experience({
           <ProductGallery
             hoveredProductId={hoveredProductId}
             registerProductGroup={registerProductGroup}
-            productOverrides={productOverrides}
           />
           <Environment preset="night" />
           <ContactShadows
@@ -1012,7 +982,6 @@ function Experience({
           onOpenProduct={setActiveProduct}
         />
         <FirstPersonControls collisionMeshes={collisionMeshes} enabled={controlsEnabled} />
-        <CameraPlacementReporter onCameraUpdate={onCameraUpdate} />
       </Canvas>
 
       {!activeProduct && <div className="crosshair" aria-hidden="true" />}
@@ -1034,29 +1003,6 @@ export default function App() {
     }
   })
   const [ambienceVolume, setAmbienceVolume] = useState(DEFAULT_AMBIENCE_VOLUME)
-  const [placementEnabled, setPlacementEnabled] = useState(true)
-  const [selectedProductId, setSelectedProductId] = useState(products[0]?.id ?? '')
-  const [productOverrides, setProductOverrides] = useState({})
-  const [cameraInfo, setCameraInfo] = useState({
-    position: START_POSITION,
-    yaw: START_YAW,
-    direction: [0, 0, 1],
-  })
-
-  const selectedProduct = products.find((product) => product.id === selectedProductId)
-  const placedProduct = selectedProduct
-    ? { ...selectedProduct, ...productOverrides[selectedProduct.id] }
-    : null
-
-  const updatePlacedProduct = (id, patch) => {
-    setProductOverrides((current) => ({
-      ...current,
-      [id]: {
-        ...current[id],
-        ...patch,
-      },
-    }))
-  }
 
   useEffect(() => {
     if (audioStarted) {
@@ -1085,11 +1031,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <AmbientAudio started={audioStarted} muted={muted} volume={ambienceVolume} />
-      <Experience
-        introStarted={audioStarted}
-        productOverrides={productOverrides}
-        onCameraUpdate={setCameraInfo}
-      />
+      <Experience introStarted={audioStarted} />
 
       <section className="ui-overlay" aria-label="3Dexpo controls and status">
         <div>
@@ -1115,16 +1057,6 @@ export default function App() {
           />
         </label>
       </div>
-      <PlacementPanel
-        cameraInfo={cameraInfo}
-        enabled={placementEnabled}
-        onToggleEnabled={() => setPlacementEnabled((isEnabled) => !isEnabled)}
-        product={placedProduct}
-        productsList={products}
-        selectedProductId={selectedProductId}
-        onSelectProduct={setSelectedProductId}
-        onUpdateProduct={updatePlacedProduct}
-      />
     </main>
   )
 }
