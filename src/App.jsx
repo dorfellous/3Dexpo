@@ -10,6 +10,7 @@ import {
 } from '@react-three/drei'
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import products from './data/products'
+import InventoryEditor from './components/InventoryEditor'
 
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
 const AMBIENCE_PATH = `${import.meta.env.BASE_URL}audio/ambience.mp3`
@@ -243,7 +244,7 @@ function ProductHighlight({ scale = 1 }) {
   )
 }
 
-function ProductNode({ product, highlighted, registerProductGroup }) {
+function ProductNode({ product, highlighted, registerProductGroup, selected = false }) {
   const groupRef = useRef(null)
   const displayRef = useRef(null)
   const spotLightRef = useRef(null)
@@ -317,29 +318,69 @@ function ProductNode({ product, highlighted, registerProductGroup }) {
           </>
         )}
       </group>
+      {selected && <SelectedProductGizmo scale={product.scale} hoverHeight={hoverHeight} />}
     </group>
   )
 }
 
-function ProductGallery({ hoveredProductId, registerProductGroup }) {
+function SelectedProductGizmo({ scale = 1, hoverHeight = 0 }) {
+  const boxScale = Math.max(1.1, scale * 2.25)
+  const markerScale = Math.max(0.75, scale * 1.5)
+
+  return (
+    <group>
+      <mesh position={[0, hoverHeight + 0.75, 0]} scale={[boxScale, boxScale, boxScale]}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial
+          color="#9fb3ff"
+          wireframe
+          transparent
+          opacity={0.9}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={markerScale}>
+        <ringGeometry args={[0.52, 0.6, 64]} />
+        <meshBasicMaterial color="#9fb3ff" transparent opacity={0.85} depthWrite={false} />
+      </mesh>
+      <pointLight intensity={1.6} distance={3} color="#9fb3ff" position={[0, hoverHeight + 1.2, 0]} />
+    </group>
+  )
+}
+
+function ProductGallery({
+  hoveredProductId,
+  registerProductGroup,
+  productOverrides,
+  selectedProductId,
+  placementMode,
+}) {
   return products.map((product) => (
     <ProductNode
       key={product.id}
-      product={product}
+      product={{ ...product, ...productOverrides[product.id] }}
       highlighted={hoveredProductId === product.id}
       registerProductGroup={registerProductGroup}
+      selected={placementMode && selectedProductId === product.id}
     />
   ))
 }
 
-function ProductInteractor({ activeProduct, productGroups, onHoverProduct, onOpenProduct }) {
+function ProductInteractor({
+  activeProduct,
+  productsForInteraction,
+  productGroups,
+  placementMode,
+  onHoverProduct,
+  onOpenProduct,
+}) {
   const { camera, gl } = useThree()
   const raycaster = useRef(new Raycaster())
   const screenCenter = useRef(new Vector2(0, 0))
   const hoveredProductRef = useRef(null)
 
   useFrame(() => {
-    if (activeProduct) {
+    if (activeProduct || placementMode) {
       if (hoveredProductRef.current) {
         hoveredProductRef.current = null
         onHoverProduct(null)
@@ -368,7 +409,11 @@ function ProductInteractor({ activeProduct, productGroups, onHoverProduct, onOpe
   useEffect(() => {
     const canvas = gl.domElement
     const handleClick = () => {
-      const product = products.find((item) => item.id === hoveredProductRef.current)
+      if (placementMode) {
+        return
+      }
+
+      const product = productsForInteraction.find((item) => item.id === hoveredProductRef.current)
       if (product && !activeProduct) {
         onOpenProduct(product)
       }
@@ -379,7 +424,43 @@ function ProductInteractor({ activeProduct, productGroups, onHoverProduct, onOpe
     return () => {
       canvas.removeEventListener('click', handleClick)
     }
-  }, [activeProduct, gl.domElement, onOpenProduct])
+  }, [activeProduct, gl.domElement, onOpenProduct, placementMode, productsForInteraction])
+
+  return null
+}
+
+function CameraEditorReporter({ active, onCameraUpdate }) {
+  const { camera } = useThree()
+  const direction = useRef(new Vector3())
+  const elapsedSinceUpdate = useRef(0)
+
+  useFrame((_, delta) => {
+    if (!active) {
+      return
+    }
+
+    elapsedSinceUpdate.current += delta
+
+    if (elapsedSinceUpdate.current < 0.08) {
+      return
+    }
+
+    elapsedSinceUpdate.current = 0
+    camera.getWorldDirection(direction.current)
+    onCameraUpdate({
+      position: [
+        Number(camera.position.x.toFixed(3)),
+        Number(camera.position.y.toFixed(3)),
+        Number(camera.position.z.toFixed(3)),
+      ],
+      yaw: Number(camera.rotation.y.toFixed(3)),
+      direction: [
+        Number(direction.current.x.toFixed(3)),
+        Number(direction.current.y.toFixed(3)),
+        Number(direction.current.z.toFixed(3)),
+      ],
+    })
+  })
 
   return null
 }
@@ -904,13 +985,23 @@ function ProductPanel({ product, onClose }) {
   )
 }
 
-function Experience({ introStarted }) {
+function Experience({
+  introStarted,
+  placementMode,
+  selectedProductId,
+  productOverrides,
+  onCameraUpdate,
+}) {
   const [collisionMeshes, setCollisionMeshes] = useState([])
   const [hoveredProductId, setHoveredProductId] = useState(null)
   const [activeProduct, setActiveProduct] = useState(null)
   const [impactCount, setImpactCount] = useState(0)
   const productGroups = useRef(new Map())
   const controlsEnabled = !activeProduct
+  const productsForInteraction = useMemo(
+    () => products.map((product) => ({ ...product, ...productOverrides[product.id] })),
+    [productOverrides],
+  )
 
   const handleIntroImpact = () => {
     window.dispatchEvent(new Event('dor-intro-impact'))
@@ -964,6 +1055,9 @@ function Experience({ introStarted }) {
           <ProductGallery
             hoveredProductId={hoveredProductId}
             registerProductGroup={registerProductGroup}
+            productOverrides={productOverrides}
+            selectedProductId={selectedProductId}
+            placementMode={placementMode}
           />
           <Environment preset="night" />
           <ContactShadows
@@ -977,15 +1071,18 @@ function Experience({ introStarted }) {
 
         <ProductInteractor
           activeProduct={activeProduct}
+          productsForInteraction={productsForInteraction}
           productGroups={productGroups}
+          placementMode={placementMode}
           onHoverProduct={setHoveredProductId}
           onOpenProduct={setActiveProduct}
         />
         <FirstPersonControls collisionMeshes={collisionMeshes} enabled={controlsEnabled} />
+        <CameraEditorReporter active={placementMode} onCameraUpdate={onCameraUpdate} />
       </Canvas>
 
       {!activeProduct && <div className="crosshair" aria-hidden="true" />}
-      {!activeProduct && hoveredProductId && (
+      {!activeProduct && !placementMode && hoveredProductId && (
         <div className="inspect-prompt">Click to Inspect</div>
       )}
       <ProductPanel product={activeProduct} onClose={() => setActiveProduct(null)} />
@@ -1003,6 +1100,28 @@ export default function App() {
     }
   })
   const [ambienceVolume, setAmbienceVolume] = useState(DEFAULT_AMBIENCE_VOLUME)
+  const [placementMode, setPlacementMode] = useState(false)
+  const [selectedProductId, setSelectedProductId] = useState(products[0]?.id ?? '')
+  const [productOverrides, setProductOverrides] = useState({})
+  const [cameraInfo, setCameraInfo] = useState({
+    position: START_POSITION,
+    yaw: START_YAW,
+    direction: [0, 0, 1],
+  })
+  const selectedProduct = products.find((product) => product.id === selectedProductId) ?? products[0]
+  const editedProduct = selectedProduct
+    ? { ...selectedProduct, ...productOverrides[selectedProduct.id] }
+    : null
+
+  const updateEditedProduct = (id, patch) => {
+    setProductOverrides((current) => ({
+      ...current,
+      [id]: {
+        ...current[id],
+        ...patch,
+      },
+    }))
+  }
 
   useEffect(() => {
     if (audioStarted) {
@@ -1031,7 +1150,13 @@ export default function App() {
   return (
     <main className="app-shell">
       <AmbientAudio started={audioStarted} muted={muted} volume={ambienceVolume} />
-      <Experience introStarted={audioStarted} />
+      <Experience
+        introStarted={audioStarted}
+        placementMode={placementMode}
+        selectedProductId={selectedProductId}
+        productOverrides={productOverrides}
+        onCameraUpdate={setCameraInfo}
+      />
 
       <section className="ui-overlay" aria-label="3Dexpo controls and status">
         <div>
@@ -1057,6 +1182,16 @@ export default function App() {
           />
         </label>
       </div>
+      <InventoryEditor
+        cameraInfo={cameraInfo}
+        enabled={placementMode}
+        onToggleEnabled={() => setPlacementMode((isEnabled) => !isEnabled)}
+        product={editedProduct}
+        products={products}
+        selectedProductId={selectedProduct?.id ?? ''}
+        onSelectProduct={setSelectedProductId}
+        onUpdateProduct={updateEditedProduct}
+      />
     </main>
   )
 }
