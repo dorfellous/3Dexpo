@@ -10,7 +10,9 @@ import {
 } from '@react-three/drei'
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import products from './data/products'
+import baseSpotlights from './data/spotlights'
 import InventoryEditor from './components/InventoryEditor'
+import SpotlightEditor from './components/SpotlightEditor'
 
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
 const AMBIENCE_PATH = `${import.meta.env.BASE_URL}audio/ambience.mp3`
@@ -371,6 +373,7 @@ function ProductInteractor({
   productsForInteraction,
   productGroups,
   placementMode,
+  lightingMode,
   onHoverProduct,
   onOpenProduct,
 }) {
@@ -380,7 +383,7 @@ function ProductInteractor({
   const hoveredProductRef = useRef(null)
 
   useFrame(() => {
-    if (activeProduct || placementMode) {
+    if (activeProduct || placementMode || lightingMode) {
       if (hoveredProductRef.current) {
         hoveredProductRef.current = null
         onHoverProduct(null)
@@ -409,7 +412,7 @@ function ProductInteractor({
   useEffect(() => {
     const canvas = gl.domElement
     const handleClick = () => {
-      if (placementMode) {
+      if (placementMode || lightingMode) {
         return
       }
 
@@ -424,9 +427,89 @@ function ProductInteractor({
     return () => {
       canvas.removeEventListener('click', handleClick)
     }
-  }, [activeProduct, gl.domElement, onOpenProduct, placementMode, productsForInteraction])
+  }, [activeProduct, gl.domElement, lightingMode, onOpenProduct, placementMode, productsForInteraction])
 
   return null
+}
+
+function SceneSpotlight({ spotlight, selected }) {
+  const lightRef = useRef(null)
+  const targetRef = useRef(null)
+  const helperRef = useRef(null)
+  const target = useMemo(() => new Vector3(...spotlight.target), [spotlight.target])
+  const position = useMemo(() => new Vector3(...spotlight.position), [spotlight.position])
+  const distanceToTarget = Math.max(0.1, position.distanceTo(target))
+
+  useEffect(() => {
+    if (lightRef.current && targetRef.current) {
+      lightRef.current.target = targetRef.current
+      targetRef.current.updateMatrixWorld()
+    }
+  }, [])
+
+  useFrame(() => {
+    if (targetRef.current) {
+      targetRef.current.position.set(...spotlight.target)
+      targetRef.current.updateMatrixWorld()
+    }
+
+    if (helperRef.current) {
+      helperRef.current.position.set(...spotlight.position)
+      helperRef.current.lookAt(target)
+    }
+  })
+
+  return (
+    <>
+      <spotLight
+        ref={lightRef}
+        castShadow
+        position={spotlight.position}
+        intensity={spotlight.intensity}
+        color={spotlight.color}
+        angle={spotlight.angle}
+        penumbra={spotlight.penumbra}
+        distance={spotlight.distance}
+        decay={spotlight.decay}
+        shadow-mapSize={[1024, 1024]}
+      />
+      <object3D ref={targetRef} position={spotlight.target} />
+      {(selected || spotlight.helper) && (
+        <group ref={helperRef} position={spotlight.position}>
+          <mesh>
+            <sphereGeometry args={[0.09, 16, 16]} />
+            <meshBasicMaterial color={spotlight.color} />
+          </mesh>
+          <mesh position={[0, 0, -distanceToTarget / 2]} rotation={[Math.PI / 2, 0, 0]}>
+            <coneGeometry
+              args={[Math.tan(spotlight.angle) * distanceToTarget, distanceToTarget, 32, 1, true]}
+            />
+            <meshBasicMaterial
+              color={spotlight.color}
+              wireframe
+              transparent
+              opacity={0.34}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh position={[0, 0, -distanceToTarget]}>
+            <sphereGeometry args={[0.08, 16, 16]} />
+            <meshBasicMaterial color="#9fb3ff" />
+          </mesh>
+        </group>
+      )}
+    </>
+  )
+}
+
+function SpotlightRig({ spotlights, selectedSpotlightId, lightingMode }) {
+  return spotlights.map((spotlight) => (
+    <SceneSpotlight
+      key={spotlight.id}
+      spotlight={spotlight}
+      selected={lightingMode && selectedSpotlightId === spotlight.id}
+    />
+  ))
 }
 
 function CameraEditorReporter({ active, onCameraUpdate }) {
@@ -988,8 +1071,11 @@ function ProductPanel({ product, onClose }) {
 function Experience({
   introStarted,
   placementMode,
+  lightingMode,
   selectedProductId,
   productOverrides,
+  spotlights,
+  selectedSpotlightId,
   onCameraUpdate,
 }) {
   const [collisionMeshes, setCollisionMeshes] = useState([])
@@ -1047,6 +1133,11 @@ function Experience({
         <FloorFog />
         <IntroTextImpact started={introStarted} onImpact={handleIntroImpact} />
         <CameraImpactShake impactCount={impactCount} />
+        <SpotlightRig
+          spotlights={spotlights}
+          selectedSpotlightId={selectedSpotlightId}
+          lightingMode={lightingMode}
+        />
 
         <Suspense fallback={<Loader />}>
           <ModelErrorBoundary fallback={<DemoEnvironment />}>
@@ -1074,15 +1165,16 @@ function Experience({
           productsForInteraction={productsForInteraction}
           productGroups={productGroups}
           placementMode={placementMode}
+          lightingMode={lightingMode}
           onHoverProduct={setHoveredProductId}
           onOpenProduct={setActiveProduct}
         />
         <FirstPersonControls collisionMeshes={collisionMeshes} enabled={controlsEnabled} />
-        <CameraEditorReporter active={placementMode} onCameraUpdate={onCameraUpdate} />
+        <CameraEditorReporter active={placementMode || lightingMode} onCameraUpdate={onCameraUpdate} />
       </Canvas>
 
       {!activeProduct && <div className="crosshair" aria-hidden="true" />}
-      {!activeProduct && !placementMode && hoveredProductId && (
+      {!activeProduct && !placementMode && !lightingMode && hoveredProductId && (
         <div className="inspect-prompt">Click to Inspect</div>
       )}
       <ProductPanel product={activeProduct} onClose={() => setActiveProduct(null)} />
@@ -1101,8 +1193,12 @@ export default function App() {
   })
   const [ambienceVolume, setAmbienceVolume] = useState(DEFAULT_AMBIENCE_VOLUME)
   const [placementMode, setPlacementMode] = useState(false)
+  const [lightingMode, setLightingMode] = useState(false)
   const [selectedProductId, setSelectedProductId] = useState(products[0]?.id ?? '')
   const [productOverrides, setProductOverrides] = useState({})
+  const [selectedSpotlightId, setSelectedSpotlightId] = useState(baseSpotlights[0]?.id ?? '')
+  const [spotlightOverrides, setSpotlightOverrides] = useState({})
+  const [draftSpotlights, setDraftSpotlights] = useState([])
   const [cameraInfo, setCameraInfo] = useState({
     position: START_POSITION,
     yaw: START_YAW,
@@ -1112,9 +1208,35 @@ export default function App() {
   const editedProduct = selectedProduct
     ? { ...selectedProduct, ...productOverrides[selectedProduct.id] }
     : null
+  const editedProducts = useMemo(
+    () => products.map((product) => ({ ...product, ...productOverrides[product.id] })),
+    [productOverrides],
+  )
+  const editedSpotlights = useMemo(
+    () => [...baseSpotlights, ...draftSpotlights].map((spotlight) => ({
+      ...spotlight,
+      ...spotlightOverrides[spotlight.id],
+    })),
+    [draftSpotlights, spotlightOverrides],
+  )
 
   const updateEditedProduct = (id, patch) => {
     setProductOverrides((current) => ({
+      ...current,
+      [id]: {
+        ...current[id],
+        ...patch,
+      },
+    }))
+  }
+
+  const createSpotlight = (spotlight) => {
+    setDraftSpotlights((current) => [...current, spotlight])
+    setSelectedSpotlightId(spotlight.id)
+  }
+
+  const updateEditedSpotlight = (id, patch) => {
+    setSpotlightOverrides((current) => ({
       ...current,
       [id]: {
         ...current[id],
@@ -1153,8 +1275,11 @@ export default function App() {
       <Experience
         introStarted={audioStarted}
         placementMode={placementMode}
+        lightingMode={lightingMode}
         selectedProductId={selectedProductId}
         productOverrides={productOverrides}
+        spotlights={editedSpotlights}
+        selectedSpotlightId={selectedSpotlightId}
         onCameraUpdate={setCameraInfo}
       />
 
@@ -1191,6 +1316,19 @@ export default function App() {
         selectedProductId={selectedProduct?.id ?? ''}
         onSelectProduct={setSelectedProductId}
         onUpdateProduct={updateEditedProduct}
+      />
+      <SpotlightEditor
+        cameraInfo={cameraInfo}
+        enabled={lightingMode}
+        onToggleEnabled={() => setLightingMode((isEnabled) => !isEnabled)}
+        products={editedProducts}
+        selectedProductId={selectedProductId}
+        onSelectProduct={setSelectedProductId}
+        spotlights={editedSpotlights}
+        selectedSpotlightId={selectedSpotlightId}
+        onSelectSpotlight={setSelectedSpotlightId}
+        onCreateSpotlight={createSpotlight}
+        onUpdateSpotlight={updateEditedSpotlight}
       />
     </main>
   )
