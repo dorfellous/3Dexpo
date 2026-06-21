@@ -133,6 +133,24 @@ select {
   backdrop-filter: blur(16px);
 }
 
+.environment-materials-editor {
+  position: fixed;
+  top: clamp(74px, 9vw, 92px);
+  left: 50%;
+  z-index: 22;
+  width: min(400px, calc(100vw - 28px));
+  max-height: calc(100svh - 112px);
+  overflow: auto;
+  padding: 14px;
+  color: #f8f8f8;
+  background: rgb(0 0 0 / 0.8);
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 8px;
+  cursor: auto;
+  transform: translateX(-50%);
+  backdrop-filter: blur(16px);
+}
+
 .inventory-editor__header {
   display: flex;
   align-items: flex-start;
@@ -182,6 +200,11 @@ select {
   text-transform: uppercase;
 }
 
+.editor-field--inline {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
 .editor-field select,
 .editor-field input[type="color"],
 .editor-field input[type="range"] {
@@ -190,6 +213,14 @@ select {
   background: rgb(255 255 255 / 0.08);
   border: 1px solid rgb(255 255 255 / 0.16);
   border-radius: 7px;
+  cursor: pointer;
+}
+
+.editor-field input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #ffffff;
   cursor: pointer;
 }
 
@@ -429,6 +460,28 @@ h1 {
   backdrop-filter: blur(12px);
 }
 
+.product-loading-indicator {
+  position: fixed;
+  top: clamp(74px, 9vw, 92px);
+  right: clamp(14px, 2vw, 24px);
+  z-index: 17;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: max-content;
+  padding: 10px 12px;
+  color: #f8f8f8;
+  background: rgb(0 0 0 / 0.76);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 7px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  text-transform: uppercase;
+  backdrop-filter: blur(14px);
+}
+
 .product-panel-backdrop {
   position: fixed;
   inset: 0;
@@ -592,12 +645,26 @@ h1 {
     max-height: 42svh;
   }
 
+  .environment-materials-editor {
+    top: 108px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-height: 42svh;
+    transform: none;
+  }
+
   .crosshair {
     display: none;
   }
 
   .inspect-prompt {
     top: 42%;
+  }
+
+  .product-loading-indicator {
+    top: 112px;
+    right: 12px;
   }
 
   .product-panel-backdrop {
