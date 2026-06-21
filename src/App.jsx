@@ -46,6 +46,13 @@ const FLOOR_RAY_HEIGHT = 1.2
 const FLOOR_RAY_DISTANCE = 4
 const MAX_STEP_HEIGHT = 0.45
 const PRODUCT_INTERACTION_DISTANCE = 6
+const DEFAULT_ACTIVATION_RADIUS = 4
+const DEFAULT_IDLE_LIGHT_MULTIPLIER = 0.22
+const DEFAULT_ACTIVE_LIGHT_MULTIPLIER = 1.25
+const IDLE_ROTATION_MULTIPLIER = 0.08
+const ACTIVE_HOVER_BOOST = 0.18
+const ACTIVE_LIGHT_ANGLE_BOOST = 0.08
+const PRODUCT_WAKE_EVENT = 'artifact-activated'
 const INTRO_TEXT = 'Dor Fellous'
 const INTRO_TEXT_POSITION = [8.776, 8.4, -39.2]
 const INTRO_TEXT_IMPACT_Y = 0.14
@@ -300,6 +307,7 @@ function ProductLoadingFallback({ onStart, onFinish }) {
 function AmbientAudio({ started, muted, volume }) {
   const audioRef = useRef(null)
   const impactRef = useRef(null)
+  const audioContextRef = useRef(null)
 
   useEffect(() => {
     if (!audioRef.current) {
@@ -340,6 +348,42 @@ function AmbientAudio({ started, muted, volume }) {
       window.removeEventListener('dor-intro-impact', handleImpact)
     }
   }, [])
+
+  useEffect(() => {
+    const handleWake = () => {
+      if (!started || muted) {
+        return
+      }
+
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      if (!AudioContext) {
+        return
+      }
+
+      const context = audioContextRef.current ?? new AudioContext()
+      audioContextRef.current = context
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      const now = context.currentTime
+
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(72, now)
+      oscillator.frequency.exponentialRampToValueAtTime(118, now + 0.42)
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.006, volume * 0.055), now + 0.06)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.62)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(now)
+      oscillator.stop(now + 0.68)
+    }
+
+    window.addEventListener(PRODUCT_WAKE_EVENT, handleWake)
+
+    return () => {
+      window.removeEventListener(PRODUCT_WAKE_EVENT, handleWake)
+    }
+  }, [muted, started, volume])
 
   return (
     <>
@@ -429,6 +473,7 @@ function ProductHighlight({ scale = 1 }) {
 
 function ProductNode({
   product,
+  isActive,
   highlighted,
   registerProductGroup,
   onStartLoading,
@@ -438,12 +483,17 @@ function ProductNode({
   const displayRef = useRef(null)
   const spotLightRef = useRef(null)
   const lightTargetRef = useRef(null)
+  const activationProgress = useRef(0)
+  const productMaterialsRef = useRef([])
   const hasModel = Boolean(product.model)
   const hoverHeight = product.hoverHeight ?? 0.18
   const rotationSpeed = product.rotationSpeed ?? 0.35
   const shouldAutoRotate = product.autoRotate ?? true
   const shouldLightProduct = product.light ?? true
   const lightPosition = product.lightPosition ?? [0, 2.6, 1.35]
+  const lightIntensity = product.lightIntensity ?? 2.1
+  const idleLightMultiplier = product.idleLightMultiplier ?? DEFAULT_IDLE_LIGHT_MULTIPLIER
+  const activeLightMultiplier = product.activeLightMultiplier ?? DEFAULT_ACTIVE_LIGHT_MULTIPLIER
 
   useEffect(() => {
     if (!groupRef.current) {
@@ -460,9 +510,58 @@ function ProductNode({
     }
   }, [])
 
-  useFrame((_, delta) => {
-    if (displayRef.current && shouldAutoRotate) {
-      displayRef.current.rotation.y += rotationSpeed * delta
+  useFrame(({ clock }, delta) => {
+    const response = 1 - Math.exp(-2.8 * delta)
+    const targetProgress = isActive ? 1 : 0
+    activationProgress.current = MathUtils.lerp(
+      activationProgress.current,
+      targetProgress,
+      response,
+    )
+    const progress = activationProgress.current
+
+    if (displayRef.current) {
+      const rotationMultiplier = MathUtils.lerp(
+        IDLE_ROTATION_MULTIPLIER,
+        1,
+        progress,
+      )
+      if (shouldAutoRotate) {
+        displayRef.current.rotation.y += rotationSpeed * rotationMultiplier * delta
+      }
+      displayRef.current.position.y = hoverHeight + ACTIVE_HOVER_BOOST * progress
+
+      if (productMaterialsRef.current.length === 0) {
+        displayRef.current.traverse((child) => {
+          if (!child.isMesh) {
+            return
+          }
+
+          getMaterialList(child.material).forEach((material) => {
+            if (material.emissive && typeof material.emissiveIntensity === 'number') {
+              productMaterialsRef.current.push(material)
+            }
+          })
+        })
+      }
+
+      const pulse = isActive
+        ? 0.5 + Math.sin(clock.elapsedTime * 2.4) * 0.5
+        : 0
+      productMaterialsRef.current.forEach((material) => {
+        material.emissive.set('#111111')
+        material.emissiveIntensity = MathUtils.lerp(0, 0.12 + pulse * 0.08, progress)
+        material.needsUpdate = true
+      })
+    }
+
+    if (spotLightRef.current) {
+      spotLightRef.current.intensity = MathUtils.lerp(
+        lightIntensity * idleLightMultiplier,
+        lightIntensity * activeLightMultiplier,
+        progress,
+      )
+      spotLightRef.current.angle = MathUtils.lerp(0.34, 0.34 + ACTIVE_LIGHT_ANGLE_BOOST, progress)
     }
   })
 
@@ -477,10 +576,10 @@ function ProductNode({
       {shouldLightProduct && (
         <spotLight
           ref={spotLightRef}
-          castShadow
+          castShadow={false}
           angle={0.42}
           penumbra={0.72}
-          intensity={product.lightIntensity ?? 2.1}
+          intensity={lightIntensity * idleLightMultiplier}
           color={product.lightColor ?? '#e6ebff'}
           position={lightPosition}
         />
@@ -497,7 +596,7 @@ function ProductNode({
             }
           >
             <Suspense fallback={<ProductLoadingFallback onStart={onStartLoading} onFinish={onFinishLoading} />}>
-              <ProductAsset product={product} highlighted={highlighted} />
+              <ProductAsset product={product} highlighted={highlighted && isActive} />
             </Suspense>
           </ModelErrorBoundary>
         ) : (
@@ -512,6 +611,7 @@ function ProductNode({
 }
 
 function ProductGallery({
+  activeProductId,
   hoveredProductId,
   registerProductGroup,
   onStartLoading,
@@ -521,7 +621,8 @@ function ProductGallery({
     <ProductNode
       key={product.id}
       product={product}
-      highlighted={hoveredProductId === product.id}
+      isActive={activeProductId === product.id}
+      highlighted={hoveredProductId === product.id && activeProductId === product.id}
       registerProductGroup={registerProductGroup}
       onStartLoading={onStartLoading}
       onFinishLoading={onFinishLoading}
@@ -529,7 +630,56 @@ function ProductGallery({
   ))
 }
 
+function ProductActivationTracker({
+  activeProduct,
+  productGroups,
+  onActivateProduct,
+}) {
+  const { camera } = useThree()
+  const nearestProductRef = useRef(null)
+  const productPosition = useRef(new Vector3())
+
+  useFrame(() => {
+    if (activeProduct) {
+      return
+    }
+
+    let nearestProductId = null
+    let nearestDistance = Infinity
+
+    products.forEach((product) => {
+      const group = productGroups.current.get(product.id)
+      if (!group) {
+        return
+      }
+
+      const radius = product.activationRadius ?? DEFAULT_ACTIVATION_RADIUS
+      group.getWorldPosition(productPosition.current)
+      const distance = Math.hypot(
+        camera.position.x - productPosition.current.x,
+        camera.position.z - productPosition.current.z,
+      )
+
+      if (distance <= radius && distance < nearestDistance) {
+        nearestDistance = distance
+        nearestProductId = product.id
+      }
+    })
+
+    if (nearestProductId !== nearestProductRef.current) {
+      if (nearestProductId) {
+        window.dispatchEvent(new CustomEvent(PRODUCT_WAKE_EVENT, { detail: nearestProductId }))
+      }
+      nearestProductRef.current = nearestProductId
+      onActivateProduct(nearestProductId)
+    }
+  })
+
+  return null
+}
+
 function ProductInteractor({
+  activeProductId,
   activeProduct,
   productGroups,
   onHoverProduct,
@@ -560,10 +710,11 @@ function ProductInteractor({
     const productId = hit?.object
       ? findProductId(hit.object)
       : null
+    const interactableProductId = productId === activeProductId ? productId : null
 
-    if (productId !== hoveredProductRef.current) {
-      hoveredProductRef.current = productId
-      onHoverProduct(productId)
+    if (interactableProductId !== hoveredProductRef.current) {
+      hoveredProductRef.current = interactableProductId
+      onHoverProduct(interactableProductId)
     }
   })
 
@@ -571,7 +722,7 @@ function ProductInteractor({
     const canvas = gl.domElement
     const handleClick = () => {
       const product = products.find((item) => item.id === hoveredProductRef.current)
-      if (product && !activeProduct) {
+      if (product && !activeProduct && product.id === activeProductId) {
         onOpenProduct(product)
       }
     }
@@ -581,7 +732,7 @@ function ProductInteractor({
     return () => {
       canvas.removeEventListener('click', handleClick)
     }
-  }, [activeProduct, gl.domElement, onOpenProduct])
+  }, [activeProduct, activeProductId, gl.domElement, onOpenProduct])
 
   return null
 }
@@ -1239,6 +1390,7 @@ function Experience({
   environmentMaterialConfig,
 }) {
   const [collisionMeshes, setCollisionMeshes] = useState([])
+  const [activeProductId, setActiveProductId] = useState(null)
   const [hoveredProductId, setHoveredProductId] = useState(null)
   const [activeProduct, setActiveProduct] = useState(null)
   const [impactCount, setImpactCount] = useState(0)
@@ -1307,6 +1459,7 @@ function Experience({
             />
           </ModelErrorBoundary>
           <ProductGallery
+            activeProductId={activeProductId}
             hoveredProductId={hoveredProductId}
             registerProductGroup={registerProductGroup}
             onStartLoading={startLoadingProduct}
@@ -1322,7 +1475,13 @@ function Experience({
           />
         </Suspense>
 
+        <ProductActivationTracker
+          activeProduct={activeProduct}
+          productGroups={productGroups}
+          onActivateProduct={setActiveProductId}
+        />
         <ProductInteractor
+          activeProductId={activeProductId}
           activeProduct={activeProduct}
           productGroups={productGroups}
           onHoverProduct={setHoveredProductId}
@@ -1334,6 +1493,9 @@ function Experience({
       {!activeProduct && <div className="crosshair" aria-hidden="true" />}
       {!activeProduct && hoveredProductId && (
         <div className="inspect-prompt">Click to Inspect</div>
+      )}
+      {!activeProduct && activeProductId && !hoveredProductId && (
+        <div className="artifact-awake-prompt">Artifact awakened</div>
       )}
       {productLoadingCount > 0 && (
         <div className="product-loading-indicator">

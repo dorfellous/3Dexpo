@@ -261,6 +261,26 @@ h1 {
   backdrop-filter: blur(12px);
 }
 
+.artifact-awake-prompt {
+  position: fixed;
+  top: calc(50% + 30px);
+  left: 50%;
+  z-index: 13;
+  min-width: max-content;
+  padding: 7px 10px;
+  color: #d7d7d7;
+  background: rgb(0 0 0 / 0.58);
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 7px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  pointer-events: none;
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+}
+
 .product-loading-indicator {
   position: fixed;
   top: clamp(74px, 9vw, 92px);
@@ -434,6 +454,10 @@ h1 {
   }
 
   .inspect-prompt {
+    top: 42%;
+  }
+
+  .artifact-awake-prompt {
     top: 42%;
   }
 

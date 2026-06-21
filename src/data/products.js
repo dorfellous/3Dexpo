@@ -16,6 +16,9 @@ const products = [
     lightIntensity: 11.800,
     lightColor: '#ffffff',
     lightPosition: [0.000, 2.600, 1.250],
+    activationRadius: 4.0,
+    idleLightMultiplier: 0.18,
+    activeLightMultiplier: 1.12,
     whatsappMessage: '',
   },
   {
@@ -34,6 +37,9 @@ const products = [
     lightIntensity: 3.200,
     lightColor: '#f2f4ff',
     lightPosition: [0.000, 2.600, 1.250],
+    activationRadius: 4.0,
+    idleLightMultiplier: 0.24,
+    activeLightMultiplier: 1.25,
     whatsappMessage: '',
   },
   {
@@ -53,6 +59,9 @@ const products = [
     lightIntensity: 3.400,
     lightColor: '#f2f4ff',
     lightPosition: [0.000, 2.700, 1.350],
+    activationRadius: 4.0,
+    idleLightMultiplier: 0.24,
+    activeLightMultiplier: 1.25,
     whatsappMessage: '',
   },
   {
@@ -71,6 +80,9 @@ const products = [
     lightIntensity: 3.200,
     lightColor: '#f2f4ff',
     lightPosition: [0.000, 2.700, 1.350],
+    activationRadius: 4.0,
+    idleLightMultiplier: 0.24,
+    activeLightMultiplier: 1.25,
     whatsappMessage: '',
   },
   {
@@ -89,6 +101,9 @@ const products = [
     lightIntensity: 3.000,
     lightColor: '#f2f4ff',
     lightPosition: [0.000, 2.500, 1.200],
+    activationRadius: 4.0,
+    idleLightMultiplier: 0.24,
+    activeLightMultiplier: 1.25,
     whatsappMessage: '',
   },
   {
@@ -107,6 +122,9 @@ const products = [
     lightIntensity: 3.200,
     lightColor: '#f2f4ff',
     lightPosition: [0.000, 2.600, 1.250],
+    activationRadius: 4.0,
+    idleLightMultiplier: 0.24,
+    activeLightMultiplier: 1.25,
     whatsappMessage: '',
   },
 ]
