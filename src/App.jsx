@@ -25,9 +25,6 @@ import products from './data/products'
 import baseSpotlights from './data/spotlights'
 import defaultCeilingLights from './data/ceilingLights'
 import defaultEnvironmentMaterials from './data/environmentMaterials'
-import InventoryEditor from './components/InventoryEditor'
-import SpotlightEditor from './components/SpotlightEditor'
-import EnvironmentMaterialsEditor from './components/EnvironmentMaterialsEditor'
 import metal014ColorUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Color.png'
 import metal014MetalnessUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Metalness.png'
 import metal014NormalUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_NormalGL.png'
@@ -97,26 +94,6 @@ function mergeOverrides(...overrides) {
   }, null)
 }
 
-function getPreviewOverride(preview, meshName, materialName) {
-  if (!preview) {
-    return null
-  }
-
-  if (preview.scope === 'environment') {
-    return preview.override
-  }
-
-  if (preview.scope === 'mesh' && preview.key === meshName) {
-    return preview.override
-  }
-
-  if (preview.scope === 'material' && preview.key === materialName) {
-    return preview.override
-  }
-
-  return null
-}
-
 function applyMaterialOverride(material, override, textureSets) {
   if (!override) {
     material.needsUpdate = true
@@ -162,9 +139,7 @@ function applyMaterialOverride(material, override, textureSets) {
 
 function SceneModel({
   environmentMaterialConfig,
-  environmentMaterialPreview,
   onCollisionMeshes,
-  onEnvironmentMaterialTargets,
 }) {
   const gltf = useGLTF(MODEL_PATH)
   const metal014Textures = useTexture({
@@ -212,7 +187,6 @@ function SceneModel({
 
   useEffect(() => {
     const collisionMeshes = []
-    const targets = []
     let meshIndex = 0
 
     scene.traverse((child) => {
@@ -227,22 +201,13 @@ function SceneModel({
         getMaterialList(child.material).forEach((material, materialIndex) => {
           const materialName = material.name || `${meshName} Material ${materialIndex + 1}`
           material.userData.environmentMaterialName = materialName
-          targets.push({
-            meshName,
-            materialName,
-          })
         })
         meshIndex += 1
       }
     })
 
-    console.groupCollapsed('3Dexpo environment GLB meshes and materials')
-    console.table(targets)
-    console.groupEnd()
-
-    onEnvironmentMaterialTargets(targets)
     onCollisionMeshes(collisionMeshes)
-  }, [onCollisionMeshes, onEnvironmentMaterialTargets, scene])
+  }, [onCollisionMeshes, scene])
 
   useEffect(() => {
     const textureSets = {
@@ -271,13 +236,12 @@ function SceneModel({
           environmentMaterialConfig.globalOverride,
           environmentMaterialConfig.materialOverrides?.[materialName],
           environmentMaterialConfig.meshOverrides?.[meshName],
-          getPreviewOverride(environmentMaterialPreview, meshName, materialName),
         )
 
         applyMaterialOverride(material, override, textureSets)
       })
     })
-  }, [environmentMaterialConfig, environmentMaterialPreview, metal014Textures, scene])
+  }, [environmentMaterialConfig, metal014Textures, scene])
 
   return <primitive object={scene} />
 }
@@ -357,9 +321,7 @@ function AmbientAudio({ started, muted, volume }) {
       return
     }
 
-    audioRef.current.play().catch(() => {
-      console.warn(`Ambience audio could not play. Confirm ${AMBIENCE_PATH} exists.`)
-    })
+    audioRef.current.play().catch(() => {})
   }, [started])
 
   useEffect(() => {
@@ -369,9 +331,7 @@ function AmbientAudio({ started, muted, volume }) {
       }
 
       impactRef.current.currentTime = 0
-      impactRef.current.play().catch(() => {
-        console.warn(`Impact audio could not play. Confirm ${IMPACT_PATH} exists.`)
-      })
+      impactRef.current.play().catch(() => {})
     }
 
     window.addEventListener('dor-intro-impact', handleImpact)
@@ -471,7 +431,6 @@ function ProductNode({
   product,
   highlighted,
   registerProductGroup,
-  selected = false,
   onStartLoading,
   onFinishLoading,
 }) {
@@ -548,32 +507,6 @@ function ProductNode({
           </>
         )}
       </group>
-      {selected && <SelectedProductGizmo scale={product.scale} hoverHeight={hoverHeight} />}
-    </group>
-  )
-}
-
-function SelectedProductGizmo({ scale = 1, hoverHeight = 0 }) {
-  const boxScale = Math.max(1.1, scale * 2.25)
-  const markerScale = Math.max(0.75, scale * 1.5)
-
-  return (
-    <group>
-      <mesh position={[0, hoverHeight + 0.75, 0]} scale={[boxScale, boxScale, boxScale]}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshBasicMaterial
-          color="#9fb3ff"
-          wireframe
-          transparent
-          opacity={0.9}
-          depthWrite={false}
-        />
-      </mesh>
-      <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={markerScale}>
-        <ringGeometry args={[0.52, 0.6, 64]} />
-        <meshBasicMaterial color="#9fb3ff" transparent opacity={0.85} depthWrite={false} />
-      </mesh>
-      <pointLight intensity={1.6} distance={3} color="#9fb3ff" position={[0, hoverHeight + 1.2, 0]} />
     </group>
   )
 }
@@ -581,19 +514,15 @@ function SelectedProductGizmo({ scale = 1, hoverHeight = 0 }) {
 function ProductGallery({
   hoveredProductId,
   registerProductGroup,
-  productOverrides,
-  selectedProductId,
-  placementMode,
   onStartLoading,
   onFinishLoading,
 }) {
   return products.map((product) => (
     <ProductNode
       key={product.id}
-      product={{ ...product, ...productOverrides[product.id] }}
+      product={product}
       highlighted={hoveredProductId === product.id}
       registerProductGroup={registerProductGroup}
-      selected={placementMode && selectedProductId === product.id}
       onStartLoading={onStartLoading}
       onFinishLoading={onFinishLoading}
     />
@@ -602,11 +531,7 @@ function ProductGallery({
 
 function ProductInteractor({
   activeProduct,
-  productsForInteraction,
   productGroups,
-  placementMode,
-  lightingMode,
-  materialMode,
   onHoverProduct,
   onOpenProduct,
 }) {
@@ -616,7 +541,7 @@ function ProductInteractor({
   const hoveredProductRef = useRef(null)
 
   useFrame(() => {
-    if (activeProduct || placementMode || lightingMode || materialMode) {
+    if (activeProduct) {
       if (hoveredProductRef.current) {
         hoveredProductRef.current = null
         onHoverProduct(null)
@@ -645,11 +570,7 @@ function ProductInteractor({
   useEffect(() => {
     const canvas = gl.domElement
     const handleClick = () => {
-      if (placementMode || lightingMode || materialMode) {
-        return
-      }
-
-      const product = productsForInteraction.find((item) => item.id === hoveredProductRef.current)
+      const product = products.find((item) => item.id === hoveredProductRef.current)
       if (product && !activeProduct) {
         onOpenProduct(product)
       }
@@ -660,18 +581,14 @@ function ProductInteractor({
     return () => {
       canvas.removeEventListener('click', handleClick)
     }
-  }, [activeProduct, gl.domElement, lightingMode, materialMode, onOpenProduct, placementMode, productsForInteraction])
+  }, [activeProduct, gl.domElement, onOpenProduct])
 
   return null
 }
 
-function SceneSpotlight({ spotlight, selected }) {
+function SceneSpotlight({ spotlight }) {
   const lightRef = useRef(null)
   const targetRef = useRef(null)
-  const helperRef = useRef(null)
-  const target = useMemo(() => new Vector3(...spotlight.target), [spotlight.target])
-  const position = useMemo(() => new Vector3(...spotlight.position), [spotlight.position])
-  const distanceToTarget = Math.max(0.1, position.distanceTo(target))
 
   useEffect(() => {
     if (lightRef.current && targetRef.current) {
@@ -679,18 +596,6 @@ function SceneSpotlight({ spotlight, selected }) {
       targetRef.current.updateMatrixWorld()
     }
   }, [])
-
-  useFrame(() => {
-    if (targetRef.current) {
-      targetRef.current.position.set(...spotlight.target)
-      targetRef.current.updateMatrixWorld()
-    }
-
-    if (helperRef.current) {
-      helperRef.current.position.set(...spotlight.position)
-      helperRef.current.lookAt(target)
-    }
-  })
 
   return (
     <>
@@ -707,40 +612,15 @@ function SceneSpotlight({ spotlight, selected }) {
         shadow-mapSize={[1024, 1024]}
       />
       <object3D ref={targetRef} position={spotlight.target} />
-      {(selected || spotlight.helper) && (
-        <group ref={helperRef} position={spotlight.position}>
-          <mesh>
-            <sphereGeometry args={[0.09, 16, 16]} />
-            <meshBasicMaterial color={spotlight.color} />
-          </mesh>
-          <mesh position={[0, 0, -distanceToTarget / 2]} rotation={[Math.PI / 2, 0, 0]}>
-            <coneGeometry
-              args={[Math.tan(spotlight.angle) * distanceToTarget, distanceToTarget, 32, 1, true]}
-            />
-            <meshBasicMaterial
-              color={spotlight.color}
-              wireframe
-              transparent
-              opacity={0.34}
-              depthWrite={false}
-            />
-          </mesh>
-          <mesh position={[0, 0, -distanceToTarget]}>
-            <sphereGeometry args={[0.08, 16, 16]} />
-            <meshBasicMaterial color="#9fb3ff" />
-          </mesh>
-        </group>
-      )}
     </>
   )
 }
 
-function SpotlightRig({ spotlights, selectedSpotlightId, lightingMode }) {
+function SpotlightRig({ spotlights }) {
   return spotlights.map((spotlight) => (
     <SceneSpotlight
       key={spotlight.id}
       spotlight={spotlight}
-      selected={lightingMode && selectedSpotlightId === spotlight.id}
     />
   ))
 }
@@ -830,42 +710,6 @@ function CeilingStripLights({ config }) {
       ))}
     </group>
   )
-}
-
-function CameraEditorReporter({ active, onCameraUpdate }) {
-  const { camera } = useThree()
-  const direction = useRef(new Vector3())
-  const elapsedSinceUpdate = useRef(0)
-
-  useFrame((_, delta) => {
-    if (!active) {
-      return
-    }
-
-    elapsedSinceUpdate.current += delta
-
-    if (elapsedSinceUpdate.current < 0.08) {
-      return
-    }
-
-    elapsedSinceUpdate.current = 0
-    camera.getWorldDirection(direction.current)
-    onCameraUpdate({
-      position: [
-        Number(camera.position.x.toFixed(3)),
-        Number(camera.position.y.toFixed(3)),
-        Number(camera.position.z.toFixed(3)),
-      ],
-      yaw: Number(camera.rotation.y.toFixed(3)),
-      direction: [
-        Number(direction.current.x.toFixed(3)),
-        Number(direction.current.y.toFixed(3)),
-        Number(direction.current.z.toFixed(3)),
-      ],
-    })
-  })
-
-  return null
 }
 
 function findProductId(object) {
@@ -1390,18 +1234,9 @@ function ProductPanel({ product, onClose }) {
 
 function Experience({
   introStarted,
-  placementMode,
-  lightingMode,
-  materialMode,
-  selectedProductId,
-  productOverrides,
   spotlights,
-  selectedSpotlightId,
   ceilingLights,
   environmentMaterialConfig,
-  environmentMaterialPreview,
-  onCameraUpdate,
-  onEnvironmentMaterialTargets,
 }) {
   const [collisionMeshes, setCollisionMeshes] = useState([])
   const [hoveredProductId, setHoveredProductId] = useState(null)
@@ -1410,10 +1245,6 @@ function Experience({
   const [productLoadingCount, setProductLoadingCount] = useState(0)
   const productGroups = useRef(new Map())
   const controlsEnabled = !activeProduct
-  const productsForInteraction = useMemo(
-    () => products.map((product) => ({ ...product, ...productOverrides[product.id] })),
-    [productOverrides],
-  )
   const startLoadingProduct = useCallback(() => {
     setProductLoadingCount((count) => count + 1)
   }, [])
@@ -1466,27 +1297,18 @@ function Experience({
         <IntroTextImpact started={introStarted} onImpact={handleIntroImpact} />
         <CameraImpactShake impactCount={impactCount} />
         <CeilingStripLights config={ceilingLights} />
-        <SpotlightRig
-          spotlights={spotlights}
-          selectedSpotlightId={selectedSpotlightId}
-          lightingMode={lightingMode}
-        />
+        <SpotlightRig spotlights={spotlights} />
 
         <Suspense fallback={<Loader />}>
           <ModelErrorBoundary fallback={<DemoEnvironment />}>
             <SceneModel
               environmentMaterialConfig={environmentMaterialConfig}
-              environmentMaterialPreview={environmentMaterialPreview}
               onCollisionMeshes={setCollisionMeshes}
-              onEnvironmentMaterialTargets={onEnvironmentMaterialTargets}
             />
           </ModelErrorBoundary>
           <ProductGallery
             hoveredProductId={hoveredProductId}
             registerProductGroup={registerProductGroup}
-            productOverrides={productOverrides}
-            selectedProductId={selectedProductId}
-            placementMode={placementMode}
             onStartLoading={startLoadingProduct}
             onFinishLoading={finishLoadingProduct}
           />
@@ -1502,20 +1324,15 @@ function Experience({
 
         <ProductInteractor
           activeProduct={activeProduct}
-          productsForInteraction={productsForInteraction}
           productGroups={productGroups}
-          placementMode={placementMode}
-          lightingMode={lightingMode}
-          materialMode={materialMode}
           onHoverProduct={setHoveredProductId}
           onOpenProduct={setActiveProduct}
         />
         <FirstPersonControls collisionMeshes={collisionMeshes} enabled={controlsEnabled} />
-        <CameraEditorReporter active={placementMode || lightingMode || materialMode} onCameraUpdate={onCameraUpdate} />
       </Canvas>
 
       {!activeProduct && <div className="crosshair" aria-hidden="true" />}
-      {!activeProduct && !placementMode && !lightingMode && !materialMode && hoveredProductId && (
+      {!activeProduct && hoveredProductId && (
         <div className="inspect-prompt">Click to Inspect</div>
       )}
       {productLoadingCount > 0 && (
@@ -1539,121 +1356,6 @@ export default function App() {
     }
   })
   const [ambienceVolume, setAmbienceVolume] = useState(DEFAULT_AMBIENCE_VOLUME)
-  const [placementMode, setPlacementMode] = useState(false)
-  const [lightingMode, setLightingMode] = useState(false)
-  const [materialMode, setMaterialMode] = useState(false)
-  const [selectedProductId, setSelectedProductId] = useState(products[0]?.id ?? '')
-  const [productOverrides, setProductOverrides] = useState({})
-  const [selectedSpotlightId, setSelectedSpotlightId] = useState(baseSpotlights[0]?.id ?? '')
-  const [spotlightOverrides, setSpotlightOverrides] = useState({})
-  const [draftSpotlights, setDraftSpotlights] = useState([])
-  const [ceilingLights, setCeilingLights] = useState(defaultCeilingLights)
-  const [environmentMaterialTargets, setEnvironmentMaterialTargets] = useState([])
-  const [environmentMaterialConfig, setEnvironmentMaterialConfig] = useState(defaultEnvironmentMaterials)
-  const [environmentMaterialPreview, setEnvironmentMaterialPreview] = useState(null)
-  const [cameraInfo, setCameraInfo] = useState({
-    position: START_POSITION,
-    yaw: START_YAW,
-    direction: [0, 0, 1],
-  })
-  const selectedProduct = products.find((product) => product.id === selectedProductId) ?? products[0]
-  const editedProduct = selectedProduct
-    ? { ...selectedProduct, ...productOverrides[selectedProduct.id] }
-    : null
-  const editedProducts = useMemo(
-    () => products.map((product) => ({ ...product, ...productOverrides[product.id] })),
-    [productOverrides],
-  )
-  const editedSpotlights = useMemo(
-    () => [...baseSpotlights, ...draftSpotlights].map((spotlight) => ({
-      ...spotlight,
-      ...spotlightOverrides[spotlight.id],
-    })),
-    [draftSpotlights, spotlightOverrides],
-  )
-
-  const updateEditedProduct = (id, patch) => {
-    setProductOverrides((current) => ({
-      ...current,
-      [id]: {
-        ...current[id],
-        ...patch,
-      },
-    }))
-  }
-
-  const createSpotlight = (spotlight) => {
-    setDraftSpotlights((current) => [...current, spotlight])
-    setSelectedSpotlightId(spotlight.id)
-  }
-
-  const updateEditedSpotlight = (id, patch) => {
-    setSpotlightOverrides((current) => ({
-      ...current,
-      [id]: {
-        ...current[id],
-        ...patch,
-      },
-    }))
-  }
-
-  const applyEnvironmentMaterialOverride = (scope, key, override) => {
-    setEnvironmentMaterialConfig((current) => {
-      if (scope === 'environment') {
-        return {
-          ...current,
-          globalOverride: override,
-        }
-      }
-
-      if (scope === 'mesh') {
-        return {
-          ...current,
-          meshOverrides: {
-            ...(current.meshOverrides ?? {}),
-            [key]: override,
-          },
-        }
-      }
-
-      return {
-        ...current,
-        materialOverrides: {
-          ...(current.materialOverrides ?? {}),
-          [key]: override,
-        },
-      }
-    })
-  }
-
-  const resetEnvironmentMaterialOverride = (scope, key) => {
-    setEnvironmentMaterialConfig((current) => {
-      if (scope === 'environment') {
-        return {
-          ...current,
-          globalOverride: null,
-        }
-      }
-
-      if (scope === 'mesh') {
-        const nextMeshOverrides = { ...(current.meshOverrides ?? {}) }
-        delete nextMeshOverrides[key]
-
-        return {
-          ...current,
-          meshOverrides: nextMeshOverrides,
-        }
-      }
-
-      const nextMaterialOverrides = { ...(current.materialOverrides ?? {}) }
-      delete nextMaterialOverrides[key]
-
-      return {
-        ...current,
-        materialOverrides: nextMaterialOverrides,
-      }
-    })
-  }
 
   useEffect(() => {
     if (audioStarted) {
@@ -1684,18 +1386,9 @@ export default function App() {
       <AmbientAudio started={audioStarted} muted={muted} volume={ambienceVolume} />
       <Experience
         introStarted={audioStarted}
-        placementMode={placementMode}
-        lightingMode={lightingMode}
-        materialMode={materialMode}
-        selectedProductId={selectedProductId}
-        productOverrides={productOverrides}
-        spotlights={editedSpotlights}
-        selectedSpotlightId={selectedSpotlightId}
-        ceilingLights={ceilingLights}
-        environmentMaterialConfig={environmentMaterialConfig}
-        environmentMaterialPreview={environmentMaterialPreview}
-        onCameraUpdate={setCameraInfo}
-        onEnvironmentMaterialTargets={setEnvironmentMaterialTargets}
+        spotlights={baseSpotlights}
+        ceilingLights={defaultCeilingLights}
+        environmentMaterialConfig={defaultEnvironmentMaterials}
       />
 
       <section className="ui-overlay" aria-label="3Dexpo controls and status">
@@ -1722,41 +1415,6 @@ export default function App() {
           />
         </label>
       </div>
-      <InventoryEditor
-        cameraInfo={cameraInfo}
-        enabled={placementMode}
-        onToggleEnabled={() => setPlacementMode((isEnabled) => !isEnabled)}
-        product={editedProduct}
-        products={products}
-        selectedProductId={selectedProduct?.id ?? ''}
-        onSelectProduct={setSelectedProductId}
-        onUpdateProduct={updateEditedProduct}
-      />
-      <SpotlightEditor
-        cameraInfo={cameraInfo}
-        enabled={lightingMode}
-        onToggleEnabled={() => setLightingMode((isEnabled) => !isEnabled)}
-        products={editedProducts}
-        selectedProductId={selectedProductId}
-        onSelectProduct={setSelectedProductId}
-        spotlights={editedSpotlights}
-        selectedSpotlightId={selectedSpotlightId}
-        onSelectSpotlight={setSelectedSpotlightId}
-        onCreateSpotlight={createSpotlight}
-        onUpdateSpotlight={updateEditedSpotlight}
-        ceilingLights={ceilingLights}
-        onUpdateCeilingLights={setCeilingLights}
-      />
-      <EnvironmentMaterialsEditor
-        enabled={materialMode}
-        onToggleEnabled={() => setMaterialMode((isEnabled) => !isEnabled)}
-        targets={environmentMaterialTargets}
-        config={environmentMaterialConfig}
-        preview={environmentMaterialPreview}
-        onPreview={setEnvironmentMaterialPreview}
-        onApply={applyEnvironmentMaterialOverride}
-        onReset={resetEnvironmentMaterialOverride}
-      />
     </main>
   )
 }
