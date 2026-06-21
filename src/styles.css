@@ -183,7 +183,8 @@ select {
 }
 
 .editor-field select,
-.editor-field input[type="color"] {
+.editor-field input[type="color"],
+.editor-field input[type="range"] {
   min-height: 36px;
   color: #f8f8f8;
   background: rgb(255 255 255 / 0.08);
@@ -209,6 +210,24 @@ select {
 
 .editor-section {
   margin: 13px 0;
+}
+
+.editor-section--separated {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(255 255 255 / 0.14);
+}
+
+.editor-section__title {
+  display: grid;
+  grid-template-columns: 1fr 86px;
+  gap: 8px;
+  align-items: center;
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .editor-section button {

@@ -7,6 +7,10 @@ const ANGLE_STEP = 0.025
 const PENUMBRA_STEP = 0.05
 const DISTANCE_STEP = 0.5
 const TARGET_DISTANCE = 4
+const CEILING_INTENSITY_STEP = 0.1
+const CEILING_COUNT_STEP = 1
+const CEILING_SPACING_STEP = 0.1
+const CEILING_HEIGHT_STEP = 0.1
 
 function formatNumber(value) {
   return Number(value).toFixed(3)
@@ -76,6 +80,8 @@ export default function SpotlightEditor({
   onSelectSpotlight,
   onCreateSpotlight,
   onUpdateSpotlight,
+  ceilingLights,
+  onUpdateCeilingLights,
 }) {
   const [copyState, setCopyState] = useState('')
   const spotlight = spotlights.find((item) => item.id === selectedSpotlightId) ?? spotlights[0]
@@ -89,6 +95,13 @@ export default function SpotlightEditor({
     onUpdateSpotlight(spotlight.id, patch)
   }
 
+  const updateCeilingLights = (patch) => {
+    onUpdateCeilingLights({
+      ...ceilingLights,
+      ...patch,
+    })
+  }
+
   const updateArray = (key, axis, amount) => {
     const next = [...spotlight[key]]
     next[axis] = Number((next[axis] + amount).toFixed(3))
@@ -98,6 +111,12 @@ export default function SpotlightEditor({
   const updateNumber = (key, amount, min = 0, max = Number.POSITIVE_INFINITY) => {
     updateSpotlight({
       [key]: Math.min(max, Math.max(min, Number((spotlight[key] + amount).toFixed(3)))),
+    })
+  }
+
+  const updateCeilingNumber = (key, amount, min = 0, max = Number.POSITIVE_INFINITY) => {
+    updateCeilingLights({
+      [key]: Math.min(max, Math.max(min, Number((ceilingLights[key] + amount).toFixed(3)))),
     })
   }
 
@@ -169,6 +188,149 @@ export default function SpotlightEditor({
 
       {enabled && (
         <>
+          <div className="editor-section editor-section--separated">
+            <div className="editor-section__title">
+              <span>Ceiling strip lights</span>
+              <button
+                type="button"
+                onClick={() => updateCeilingLights({ enabled: !ceilingLights.enabled })}
+              >
+                {ceilingLights.enabled ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+
+          <div className="editor-readout">
+            <span>Ceiling intensity</span>
+            <code>{formatNumber(ceilingLights.stripIntensity)}</code>
+          </div>
+          <div className="editor-readout">
+            <span>Strip count</span>
+            <code>{Math.round(ceilingLights.stripCount)}</code>
+          </div>
+          <div className="editor-readout">
+            <span>Spacing</span>
+            <code>{formatNumber(ceilingLights.stripSpacing)}</code>
+          </div>
+          <div className="editor-readout">
+            <span>Height</span>
+            <code>{formatNumber(ceilingLights.stripHeight)}</code>
+          </div>
+
+          <div className="editor-grid" aria-label="Ceiling light controls">
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripIntensity', -CEILING_INTENSITY_STEP)}
+            >
+              Intensity -
+            </button>
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripIntensity', CEILING_INTENSITY_STEP)}
+            >
+              Intensity +
+            </button>
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripCount', -CEILING_COUNT_STEP, 1, 16)}
+            >
+              Count -
+            </button>
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripCount', CEILING_COUNT_STEP, 1, 16)}
+            >
+              Count +
+            </button>
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripSpacing', -CEILING_SPACING_STEP, 0.35, 4)}
+            >
+              Spacing -
+            </button>
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripSpacing', CEILING_SPACING_STEP, 0.35, 4)}
+            >
+              Spacing +
+            </button>
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripHeight', -CEILING_HEIGHT_STEP, 2.2, 9)}
+            >
+              Height -
+            </button>
+            <button
+              type="button"
+              onClick={() => updateCeilingNumber('stripHeight', CEILING_HEIGHT_STEP, 2.2, 9)}
+            >
+              Height +
+            </button>
+          </div>
+
+          <label className="editor-field">
+            <span>Ceiling color</span>
+            <input
+              type="color"
+              value={ceilingLights.stripColor}
+              onChange={(event) => updateCeilingLights({ stripColor: event.target.value })}
+            />
+          </label>
+
+          <label className="editor-field">
+            <span>Ceiling intensity</span>
+            <input
+              type="range"
+              min="0"
+              max="4"
+              step="0.05"
+              value={ceilingLights.stripIntensity}
+              onChange={(event) =>
+                updateCeilingLights({ stripIntensity: Number(event.target.value) })
+              }
+            />
+          </label>
+
+          <label className="editor-field">
+            <span>Strip count</span>
+            <input
+              type="range"
+              min="1"
+              max="16"
+              step="1"
+              value={Math.round(ceilingLights.stripCount)}
+              onChange={(event) => updateCeilingLights({ stripCount: Number(event.target.value) })}
+            />
+          </label>
+
+          <label className="editor-field">
+            <span>Strip spacing</span>
+            <input
+              type="range"
+              min="0.35"
+              max="4"
+              step="0.05"
+              value={ceilingLights.stripSpacing}
+              onChange={(event) =>
+                updateCeilingLights({ stripSpacing: Number(event.target.value) })
+              }
+            />
+          </label>
+
+          <label className="editor-field">
+            <span>Ceiling height</span>
+            <input
+              type="range"
+              min="2.2"
+              max="9"
+              step="0.05"
+              value={ceilingLights.stripHeight}
+              onChange={(event) =>
+                updateCeilingLights({ stripHeight: Number(event.target.value) })
+              }
+            />
+          </label>
+
           <div className="editor-section">
             <button type="button" onClick={addSpotlight}>
               New Spotlight

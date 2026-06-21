@@ -1,6 +1,7 @@
 import { Component, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { BackSide, Euler, MathUtils, Raycaster, Vector2, Vector3 } from 'three'
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import {
   ContactShadows,
   Environment,
@@ -11,6 +12,7 @@ import {
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
 import products from './data/products'
 import baseSpotlights from './data/spotlights'
+import defaultCeilingLights from './data/ceilingLights'
 import InventoryEditor from './components/InventoryEditor'
 import SpotlightEditor from './components/SpotlightEditor'
 
@@ -38,6 +40,8 @@ const INTRO_GRAVITY = 18
 const INTRO_START_DELAY = 0.18
 const IMPACT_SHAKE_DURATION = 0.72
 const IMPACT_SHAKE_STRENGTH = 0.085
+
+RectAreaLightUniformsLib.init()
 
 class ModelErrorBoundary extends Component {
   constructor(props) {
@@ -510,6 +514,93 @@ function SpotlightRig({ spotlights, selectedSpotlightId, lightingMode }) {
       selected={lightingMode && selectedSpotlightId === spotlight.id}
     />
   ))
+}
+
+function CeilingStrip({ position, length, width, color, intensity }) {
+  const lightRef = useRef(null)
+
+  useEffect(() => {
+    if (lightRef.current) {
+      lightRef.current.lookAt(position[0], position[1] - 1, position[2])
+    }
+  }, [position])
+
+  return (
+    <group position={position}>
+      <mesh receiveShadow={false}>
+        <boxGeometry args={[length, 0.025, width]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={1.35}
+          toneMapped={false}
+        />
+      </mesh>
+      <rectAreaLight
+        ref={lightRef}
+        position={[0, -0.025, 0]}
+        color={color}
+        intensity={intensity}
+        width={length}
+        height={Math.max(0.35, width * 8)}
+      />
+      <pointLight
+        color={color}
+        intensity={intensity * 0.22}
+        distance={9}
+        decay={2}
+        position={[0, -0.25, 0]}
+      />
+    </group>
+  )
+}
+
+function CeilingStripLights({ config }) {
+  const {
+    enabled,
+    stripCount,
+    stripSpacing,
+    stripLength,
+    stripWidth,
+    stripHeight,
+    stripColor,
+    stripIntensity,
+    center,
+  } = config
+
+  const strips = useMemo(() => {
+    if (!enabled) {
+      return []
+    }
+
+    const count = Math.max(1, Math.round(stripCount))
+    const start = -((count - 1) * stripSpacing) / 2
+
+    return Array.from({ length: count }, (_, index) => [
+      center[0],
+      stripHeight,
+      center[2] + start + index * stripSpacing,
+    ])
+  }, [center, enabled, stripCount, stripHeight, stripSpacing])
+
+  if (!enabled) {
+    return null
+  }
+
+  return (
+    <group>
+      {strips.map((position, index) => (
+        <CeilingStrip
+          key={`${index}-${position.join('-')}`}
+          position={position}
+          length={stripLength}
+          width={stripWidth}
+          color={stripColor}
+          intensity={stripIntensity}
+        />
+      ))}
+    </group>
+  )
 }
 
 function CameraEditorReporter({ active, onCameraUpdate }) {
@@ -1076,6 +1167,7 @@ function Experience({
   productOverrides,
   spotlights,
   selectedSpotlightId,
+  ceilingLights,
   onCameraUpdate,
 }) {
   const [collisionMeshes, setCollisionMeshes] = useState([])
@@ -1133,6 +1225,7 @@ function Experience({
         <FloorFog />
         <IntroTextImpact started={introStarted} onImpact={handleIntroImpact} />
         <CameraImpactShake impactCount={impactCount} />
+        <CeilingStripLights config={ceilingLights} />
         <SpotlightRig
           spotlights={spotlights}
           selectedSpotlightId={selectedSpotlightId}
@@ -1199,6 +1292,7 @@ export default function App() {
   const [selectedSpotlightId, setSelectedSpotlightId] = useState(baseSpotlights[0]?.id ?? '')
   const [spotlightOverrides, setSpotlightOverrides] = useState({})
   const [draftSpotlights, setDraftSpotlights] = useState([])
+  const [ceilingLights, setCeilingLights] = useState(defaultCeilingLights)
   const [cameraInfo, setCameraInfo] = useState({
     position: START_POSITION,
     yaw: START_YAW,
@@ -1280,6 +1374,7 @@ export default function App() {
         productOverrides={productOverrides}
         spotlights={editedSpotlights}
         selectedSpotlightId={selectedSpotlightId}
+        ceilingLights={ceilingLights}
         onCameraUpdate={setCameraInfo}
       />
 
@@ -1329,6 +1424,8 @@ export default function App() {
         onSelectSpotlight={setSelectedSpotlightId}
         onCreateSpotlight={createSpotlight}
         onUpdateSpotlight={updateEditedSpotlight}
+        ceilingLights={ceilingLights}
+        onUpdateCeilingLights={setCeilingLights}
       />
     </main>
   )
