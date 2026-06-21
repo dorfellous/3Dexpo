@@ -1,0 +1,41 @@
+name: Run production cleanup patch
+
+on:
+  push:
+    paths:
+      - .github/workflows/run-production-cleanup.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract and apply cleanup patch
+        run: |
+          awk '/PATCH_B64/{flag=!flag; next} flag {print}' .github/workflows/apply-production-cleanup.yml | tr -d '[:space:]' > /tmp/cleanup.patch.xz.b64
+          base64 -d /tmp/cleanup.patch.xz.b64 > /tmp/cleanup.patch.xz
+          xz -d -c /tmp/cleanup.patch.xz > /tmp/cleanup.patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am /tmp/cleanup.patch
+
+      - name: Verify build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Remove temporary workflows and push
+        run: |
+          rm -f .github/workflows/apply-production-cleanup.yml .github/workflows/run-production-cleanup.yml
+          git add -A
+          git commit --amend --no-edit
+          git push origin HEAD:main
