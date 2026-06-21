@@ -1,6 +1,7 @@
 name: Deploy to GitHub Pages
 
 # Touch this workflow when a connector-triggered deploy is needed after bot-authored changes.
+# Last trigger: exhibition activation mode.
 
 on:
   push:
