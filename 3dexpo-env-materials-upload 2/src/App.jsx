@@ -1,0 +1,1720 @@
+import { Component, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import {
+  BackSide,
+  Color,
+  Euler,
+  MathUtils,
+  Raycaster,
+  RepeatWrapping,
+  SRGBColorSpace,
+  Vector2,
+  Vector3,
+} from 'three'
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
+import {
+  ContactShadows,
+  Environment,
+  Html,
+  Text3D,
+  useGLTF,
+  useTexture,
+} from '@react-three/drei'
+import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
+import products from './data/products'
+import baseSpotlights from './data/spotlights'
+import defaultCeilingLights from './data/ceilingLights'
+import defaultEnvironmentMaterials from './data/environmentMaterials'
+import InventoryEditor from './components/InventoryEditor'
+import SpotlightEditor from './components/SpotlightEditor'
+import EnvironmentMaterialsEditor from './components/EnvironmentMaterialsEditor'
+import metal014ColorUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Color.png'
+import metal014MetalnessUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Metalness.png'
+import metal014NormalUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_NormalGL.png'
+import metal014RoughnessUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Roughness.png'
+
+const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
+const AMBIENCE_PATH = `${import.meta.env.BASE_URL}audio/ambience.mp3`
+const IMPACT_PATH = `${import.meta.env.BASE_URL}audio/impact.mp3`
+const WHATSAPP_NUMBER = '972000000000'
+const AUDIO_MUTE_STORAGE_KEY = '3dexpo-audio-muted'
+const DEFAULT_AMBIENCE_VOLUME = 0.18
+const IMPACT_VOLUME = 0.42
+const EYE_HEIGHT = 1.65
+const START_POSITION = [8.776, 1.650, -45.208]
+const START_YAW = Math.PI
+const BODY_RADIUS = 0.35
+const MIN_FLOOR_Y = 0
+const FLOOR_RAY_HEIGHT = 1.2
+const FLOOR_RAY_DISTANCE = 4
+const MAX_STEP_HEIGHT = 0.45
+const PRODUCT_INTERACTION_DISTANCE = 6
+const INTRO_TEXT = 'Dor Fellous'
+const INTRO_TEXT_POSITION = [8.776, 8.4, -39.2]
+const INTRO_TEXT_IMPACT_Y = 0.14
+const INTRO_TEXT_SCALE = 0.82
+const INTRO_GRAVITY = 18
+const INTRO_START_DELAY = 0.18
+const IMPACT_SHAKE_DURATION = 0.72
+const IMPACT_SHAKE_STRENGTH = 0.085
+
+RectAreaLightUniformsLib.init()
+
+class ModelErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback
+    }
+
+    return this.props.children
+  }
+}
+
+function getMaterialList(material) {
+  return Array.isArray(material) ? material.filter(Boolean) : [material].filter(Boolean)
+}
+
+function mergeOverrides(...overrides) {
+  return overrides.reduce((merged, override) => {
+    if (!override) {
+      return merged
+    }
+
+    return {
+      ...merged,
+      ...override,
+      ...(override.textureSet ? { textureSet: { ...override.textureSet } } : {}),
+    }
+  }, null)
+}
+
+function getPreviewOverride(preview, meshName, materialName) {
+  if (!preview) {
+    return null
+  }
+
+  if (preview.scope === 'environment') {
+    return preview.override
+  }
+
+  if (preview.scope === 'mesh' && preview.key === meshName) {
+    return preview.override
+  }
+
+  if (preview.scope === 'material' && preview.key === materialName) {
+    return preview.override
+  }
+
+  return null
+}
+
+function applyMaterialOverride(material, override, textureSets) {
+  if (!override) {
+    material.needsUpdate = true
+    return
+  }
+
+  if (override.color && material.color) {
+    material.color = new Color(override.color)
+  }
+
+  if (typeof override.roughness === 'number' && 'roughness' in material) {
+    material.roughness = override.roughness
+  }
+
+  if (typeof override.metalness === 'number' && 'metalness' in material) {
+    material.metalness = override.metalness
+  }
+
+  if (override.emissive && material.emissive) {
+    material.emissive = new Color(override.emissive)
+  }
+
+  if (typeof override.emissiveIntensity === 'number' && 'emissiveIntensity' in material) {
+    material.emissiveIntensity = override.emissiveIntensity
+  }
+
+  if (typeof override.opacity === 'number') {
+    material.opacity = override.opacity
+    material.transparent = override.opacity < 1
+  }
+
+  if (override.textureSet) {
+    const textures = textureSets.metal014
+    material.map = textures.map ?? null
+    material.normalMap = textures.normalMap ?? null
+    material.roughnessMap = textures.roughnessMap ?? null
+    material.metalnessMap = textures.metalnessMap ?? null
+    material.aoMap = textures.aoMap ?? null
+  }
+
+  material.needsUpdate = true
+}
+
+function SceneModel({
+  environmentMaterialConfig,
+  environmentMaterialPreview,
+  onCollisionMeshes,
+  onEnvironmentMaterialTargets,
+}) {
+  const gltf = useGLTF(MODEL_PATH)
+  const metal014Textures = useTexture({
+    map: metal014ColorUrl,
+    normalMap: metal014NormalUrl,
+    roughnessMap: metal014RoughnessUrl,
+    metalnessMap: metal014MetalnessUrl,
+  })
+  const originalMaterialsRef = useRef(new Map())
+  const scene = useMemo(() => {
+    const clonedScene = gltf.scene.clone(true)
+    originalMaterialsRef.current = new Map()
+
+    clonedScene.traverse((child) => {
+      if (!child.isMesh) {
+        return
+      }
+
+      if (Array.isArray(child.material)) {
+        child.material = child.material.map((material) => material.clone())
+      } else if (child.material) {
+        child.material = child.material.clone()
+      }
+
+      getMaterialList(child.material).forEach((material) => {
+        originalMaterialsRef.current.set(material.uuid, material.clone())
+      })
+    })
+
+    return clonedScene
+  }, [gltf.scene])
+
+  useEffect(() => {
+    Object.values(metal014Textures).forEach((texture) => {
+      texture.wrapS = RepeatWrapping
+      texture.wrapT = RepeatWrapping
+      texture.repeat.set(2.5, 2.5)
+      texture.needsUpdate = true
+    })
+
+    if (metal014Textures.map) {
+      metal014Textures.map.colorSpace = SRGBColorSpace
+    }
+  }, [metal014Textures])
+
+  useEffect(() => {
+    const collisionMeshes = []
+    const targets = []
+    let meshIndex = 0
+
+    scene.traverse((child) => {
+      if (child.isMesh) {
+        const meshName = child.name || `Environment Mesh ${meshIndex + 1}`
+        child.userData.environmentMeshName = meshName
+        child.castShadow = true
+        child.receiveShadow = true
+        child.updateWorldMatrix(true, false)
+        collisionMeshes.push(child)
+
+        getMaterialList(child.material).forEach((material, materialIndex) => {
+          const materialName = material.name || `${meshName} Material ${materialIndex + 1}`
+          material.userData.environmentMaterialName = materialName
+          targets.push({
+            meshName,
+            materialName,
+          })
+        })
+        meshIndex += 1
+      }
+    })
+
+    console.groupCollapsed('3Dexpo environment GLB meshes and materials')
+    console.table(targets)
+    console.groupEnd()
+
+    onEnvironmentMaterialTargets(targets)
+    onCollisionMeshes(collisionMeshes)
+  }, [onCollisionMeshes, onEnvironmentMaterialTargets, scene])
+
+  useEffect(() => {
+    const textureSets = {
+      metal014: metal014Textures,
+    }
+
+    scene.traverse((child) => {
+      if (!child.isMesh) {
+        return
+      }
+
+      const meshName = child.userData.environmentMeshName || child.name || ''
+
+      getMaterialList(child.material).forEach((material, materialIndex) => {
+        const originalMaterial = originalMaterialsRef.current.get(material.uuid)
+        const materialName =
+          material.userData.environmentMaterialName ||
+          material.name ||
+          `${meshName} Material ${materialIndex + 1}`
+
+        if (originalMaterial) {
+          material.copy(originalMaterial)
+        }
+
+        const override = mergeOverrides(
+          environmentMaterialConfig.globalOverride,
+          environmentMaterialConfig.materialOverrides?.[materialName],
+          environmentMaterialConfig.meshOverrides?.[meshName],
+          getPreviewOverride(environmentMaterialPreview, meshName, materialName),
+        )
+
+        applyMaterialOverride(material, override, textureSets)
+      })
+    })
+  }, [environmentMaterialConfig, environmentMaterialPreview, metal014Textures, scene])
+
+  return <primitive object={scene} />
+}
+
+function resolvePublicAssetPath(path) {
+  if (!path) {
+    return ''
+  }
+
+  if (path.startsWith('http') || path.startsWith(import.meta.env.BASE_URL)) {
+    return path
+  }
+
+  return `${import.meta.env.BASE_URL}${path.replace(/^\//, '')}`
+}
+
+function ProductFallback({ highlighted = false }) {
+  return (
+    <group>
+      <mesh position={[0, 0.12, 0]} receiveShadow>
+        <cylinderGeometry args={[0.62, 0.72, 0.24, 48]} />
+        <meshStandardMaterial color="#161616" roughness={0.68} metalness={0.25} />
+      </mesh>
+      <mesh position={[0, 0.82, 0]} castShadow>
+        <icosahedronGeometry args={[0.46, 2]} />
+        <meshStandardMaterial
+          color="#d8d8d8"
+          emissive={highlighted ? '#2f3b5c' : '#000000'}
+          emissiveIntensity={highlighted ? 0.45 : 0}
+          roughness={0.32}
+          metalness={0.38}
+        />
+      </mesh>
+    </group>
+  )
+}
+
+function AmbientAudio({ started, muted, volume }) {
+  const audioRef = useRef(null)
+  const impactRef = useRef(null)
+
+  useEffect(() => {
+    if (!audioRef.current) {
+      return
+    }
+
+    audioRef.current.volume = volume
+    audioRef.current.loop = true
+    audioRef.current.muted = muted
+    if (impactRef.current) {
+      impactRef.current.volume = IMPACT_VOLUME
+      impactRef.current.loop = false
+      impactRef.current.muted = muted
+    }
+  }, [muted, volume])
+
+  useEffect(() => {
+    if (!started || !audioRef.current) {
+      return
+    }
+
+    audioRef.current.play().catch(() => {
+      console.warn(`Ambience audio could not play. Confirm ${AMBIENCE_PATH} exists.`)
+    })
+  }, [started])
+
+  useEffect(() => {
+    const handleImpact = () => {
+      if (!impactRef.current) {
+        return
+      }
+
+      impactRef.current.currentTime = 0
+      impactRef.current.play().catch(() => {
+        console.warn(`Impact audio could not play. Confirm ${IMPACT_PATH} exists.`)
+      })
+    }
+
+    window.addEventListener('dor-intro-impact', handleImpact)
+
+    return () => {
+      window.removeEventListener('dor-intro-impact', handleImpact)
+    }
+  }, [])
+
+  return (
+    <>
+      <audio ref={audioRef} src={AMBIENCE_PATH} preload="auto" />
+      <audio ref={impactRef} src={IMPACT_PATH} preload="auto" />
+    </>
+  )
+}
+
+function FloorFog() {
+  const fogRef = useRef(null)
+
+  useFrame(({ clock }) => {
+    if (!fogRef.current) {
+      return
+    }
+
+    const elapsed = clock.getElapsedTime()
+    fogRef.current.children.forEach((child, index) => {
+      child.position.x += Math.sin(elapsed * 0.18 + index) * 0.0008
+      child.material.opacity = 0.065 + Math.sin(elapsed * 0.42 + index * 1.7) * 0.018
+    })
+  })
+
+  return (
+    <group ref={fogRef} position={[START_POSITION[0], 0.055, START_POSITION[2] + 4.2]}>
+      {[
+        [-3.8, 0, -2.4, 5.4, 1.7, 0.18],
+        [1.6, 0, -1.6, 6.2, 2.1, -0.08],
+        [-0.4, 0, 1.6, 7.5, 2.4, 0.05],
+        [3.2, 0, 2.8, 5.6, 1.8, -0.16],
+      ].map(([x, y, z, sx, sz, rotation], index) => (
+        <mesh
+          key={index}
+          position={[x, y + index * 0.012, z]}
+          rotation={[-Math.PI / 2, 0, rotation]}
+          scale={[sx, sz, 1]}
+        >
+          <circleGeometry args={[1, 48]} />
+          <meshBasicMaterial
+            color="#6f7684"
+            transparent
+            opacity={0.06}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+function ProductAsset({ product, highlighted = false }) {
+  const assetPath = resolvePublicAssetPath(product.model)
+  const gltf = useGLTF(assetPath)
+  const scene = useMemo(() => gltf.scene.clone(true), [gltf.scene])
+
+  useEffect(() => {
+    scene.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+  }, [scene])
+
+  return (
+    <>
+      <primitive object={scene} />
+      {highlighted && <ProductHighlight scale={product.scale} />}
+    </>
+  )
+}
+
+function ProductHighlight({ scale = 1 }) {
+  const highlightScale = Math.max(0.8, scale * 1.15)
+
+  return (
+    <group>
+      <mesh position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={highlightScale}>
+        <torusGeometry args={[0.7, 0.01, 12, 72]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.48} />
+      </mesh>
+      <pointLight intensity={1.2} distance={2.6} color="#9fb3ff" position={[0, 1.2, 0]} />
+    </group>
+  )
+}
+
+function ProductNode({ product, highlighted, registerProductGroup, selected = false }) {
+  const groupRef = useRef(null)
+  const displayRef = useRef(null)
+  const spotLightRef = useRef(null)
+  const lightTargetRef = useRef(null)
+  const hasModel = Boolean(product.model)
+  const hoverHeight = product.hoverHeight ?? 0.18
+  const rotationSpeed = product.rotationSpeed ?? 0.35
+  const shouldAutoRotate = product.autoRotate ?? true
+  const shouldLightProduct = product.light ?? true
+  const lightPosition = product.lightPosition ?? [0, 2.6, 1.35]
+
+  useEffect(() => {
+    if (!groupRef.current) {
+      return undefined
+    }
+
+    return registerProductGroup(product.id, groupRef.current)
+  }, [product.id, registerProductGroup])
+
+  useEffect(() => {
+    if (spotLightRef.current && lightTargetRef.current) {
+      spotLightRef.current.target = lightTargetRef.current
+      lightTargetRef.current.updateMatrixWorld()
+    }
+  }, [])
+
+  useFrame((_, delta) => {
+    if (displayRef.current && shouldAutoRotate) {
+      displayRef.current.rotation.y += rotationSpeed * delta
+    }
+  })
+
+  return (
+    <group
+      ref={groupRef}
+      position={product.position}
+      rotation={product.rotation}
+      scale={product.scale}
+      userData={{ productId: product.id }}
+    >
+      {shouldLightProduct && (
+        <spotLight
+          ref={spotLightRef}
+          castShadow
+          angle={0.42}
+          penumbra={0.72}
+          intensity={product.lightIntensity ?? 2.1}
+          color={product.lightColor ?? '#e6ebff'}
+          position={lightPosition}
+        />
+      )}
+      <object3D ref={lightTargetRef} position={[0, hoverHeight + 0.62, 0]} />
+      <group ref={displayRef} position={[0, hoverHeight, 0]}>
+        {hasModel ? (
+          <ModelErrorBoundary
+            fallback={
+              <>
+                <ProductFallback highlighted={highlighted} />
+                {highlighted && <ProductHighlight scale={product.scale} />}
+              </>
+            }
+          >
+            <Suspense fallback={<ProductFallback highlighted={highlighted} />}>
+              <ProductAsset product={product} highlighted={highlighted} />
+            </Suspense>
+          </ModelErrorBoundary>
+        ) : (
+          <>
+            <ProductFallback highlighted={highlighted} />
+            {highlighted && <ProductHighlight scale={product.scale} />}
+          </>
+        )}
+      </group>
+      {selected && <SelectedProductGizmo scale={product.scale} hoverHeight={hoverHeight} />}
+    </group>
+  )
+}
+
+function SelectedProductGizmo({ scale = 1, hoverHeight = 0 }) {
+  const boxScale = Math.max(1.1, scale * 2.25)
+  const markerScale = Math.max(0.75, scale * 1.5)
+
+  return (
+    <group>
+      <mesh position={[0, hoverHeight + 0.75, 0]} scale={[boxScale, boxScale, boxScale]}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial
+          color="#9fb3ff"
+          wireframe
+          transparent
+          opacity={0.9}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh position={[0, 0.035, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={markerScale}>
+        <ringGeometry args={[0.52, 0.6, 64]} />
+        <meshBasicMaterial color="#9fb3ff" transparent opacity={0.85} depthWrite={false} />
+      </mesh>
+      <pointLight intensity={1.6} distance={3} color="#9fb3ff" position={[0, hoverHeight + 1.2, 0]} />
+    </group>
+  )
+}
+
+function ProductGallery({
+  hoveredProductId,
+  registerProductGroup,
+  productOverrides,
+  selectedProductId,
+  placementMode,
+}) {
+  return products.map((product) => (
+    <ProductNode
+      key={product.id}
+      product={{ ...product, ...productOverrides[product.id] }}
+      highlighted={hoveredProductId === product.id}
+      registerProductGroup={registerProductGroup}
+      selected={placementMode && selectedProductId === product.id}
+    />
+  ))
+}
+
+function ProductInteractor({
+  activeProduct,
+  productsForInteraction,
+  productGroups,
+  placementMode,
+  lightingMode,
+  materialMode,
+  onHoverProduct,
+  onOpenProduct,
+}) {
+  const { camera, gl } = useThree()
+  const raycaster = useRef(new Raycaster())
+  const screenCenter = useRef(new Vector2(0, 0))
+  const hoveredProductRef = useRef(null)
+
+  useFrame(() => {
+    if (activeProduct || placementMode || lightingMode || materialMode) {
+      if (hoveredProductRef.current) {
+        hoveredProductRef.current = null
+        onHoverProduct(null)
+      }
+      return
+    }
+
+    const groups = Array.from(productGroups.current.values())
+    if (groups.length === 0) {
+      return
+    }
+
+    raycaster.current.setFromCamera(screenCenter.current, camera)
+    raycaster.current.far = PRODUCT_INTERACTION_DISTANCE
+    const hit = raycaster.current.intersectObjects(groups, true)[0]
+    const productId = hit?.object
+      ? findProductId(hit.object)
+      : null
+
+    if (productId !== hoveredProductRef.current) {
+      hoveredProductRef.current = productId
+      onHoverProduct(productId)
+    }
+  })
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    const handleClick = () => {
+      if (placementMode || lightingMode || materialMode) {
+        return
+      }
+
+      const product = productsForInteraction.find((item) => item.id === hoveredProductRef.current)
+      if (product && !activeProduct) {
+        onOpenProduct(product)
+      }
+    }
+
+    canvas.addEventListener('click', handleClick)
+
+    return () => {
+      canvas.removeEventListener('click', handleClick)
+    }
+  }, [activeProduct, gl.domElement, lightingMode, materialMode, onOpenProduct, placementMode, productsForInteraction])
+
+  return null
+}
+
+function SceneSpotlight({ spotlight, selected }) {
+  const lightRef = useRef(null)
+  const targetRef = useRef(null)
+  const helperRef = useRef(null)
+  const target = useMemo(() => new Vector3(...spotlight.target), [spotlight.target])
+  const position = useMemo(() => new Vector3(...spotlight.position), [spotlight.position])
+  const distanceToTarget = Math.max(0.1, position.distanceTo(target))
+
+  useEffect(() => {
+    if (lightRef.current && targetRef.current) {
+      lightRef.current.target = targetRef.current
+      targetRef.current.updateMatrixWorld()
+    }
+  }, [])
+
+  useFrame(() => {
+    if (targetRef.current) {
+      targetRef.current.position.set(...spotlight.target)
+      targetRef.current.updateMatrixWorld()
+    }
+
+    if (helperRef.current) {
+      helperRef.current.position.set(...spotlight.position)
+      helperRef.current.lookAt(target)
+    }
+  })
+
+  return (
+    <>
+      <spotLight
+        ref={lightRef}
+        castShadow
+        position={spotlight.position}
+        intensity={spotlight.intensity}
+        color={spotlight.color}
+        angle={spotlight.angle}
+        penumbra={spotlight.penumbra}
+        distance={spotlight.distance}
+        decay={spotlight.decay}
+        shadow-mapSize={[1024, 1024]}
+      />
+      <object3D ref={targetRef} position={spotlight.target} />
+      {(selected || spotlight.helper) && (
+        <group ref={helperRef} position={spotlight.position}>
+          <mesh>
+            <sphereGeometry args={[0.09, 16, 16]} />
+            <meshBasicMaterial color={spotlight.color} />
+          </mesh>
+          <mesh position={[0, 0, -distanceToTarget / 2]} rotation={[Math.PI / 2, 0, 0]}>
+            <coneGeometry
+              args={[Math.tan(spotlight.angle) * distanceToTarget, distanceToTarget, 32, 1, true]}
+            />
+            <meshBasicMaterial
+              color={spotlight.color}
+              wireframe
+              transparent
+              opacity={0.34}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh position={[0, 0, -distanceToTarget]}>
+            <sphereGeometry args={[0.08, 16, 16]} />
+            <meshBasicMaterial color="#9fb3ff" />
+          </mesh>
+        </group>
+      )}
+    </>
+  )
+}
+
+function SpotlightRig({ spotlights, selectedSpotlightId, lightingMode }) {
+  return spotlights.map((spotlight) => (
+    <SceneSpotlight
+      key={spotlight.id}
+      spotlight={spotlight}
+      selected={lightingMode && selectedSpotlightId === spotlight.id}
+    />
+  ))
+}
+
+function CeilingStrip({ position, length, width, color, intensity }) {
+  const lightRef = useRef(null)
+
+  useEffect(() => {
+    if (lightRef.current) {
+      lightRef.current.lookAt(position[0], position[1] - 1, position[2])
+    }
+  }, [position])
+
+  return (
+    <group position={position}>
+      <mesh receiveShadow={false}>
+        <boxGeometry args={[length, 0.025, width]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={1.35}
+          toneMapped={false}
+        />
+      </mesh>
+      <rectAreaLight
+        ref={lightRef}
+        position={[0, -0.025, 0]}
+        color={color}
+        intensity={intensity}
+        width={length}
+        height={Math.max(0.35, width * 8)}
+      />
+      <pointLight
+        color={color}
+        intensity={intensity * 0.22}
+        distance={9}
+        decay={2}
+        position={[0, -0.25, 0]}
+      />
+    </group>
+  )
+}
+
+function CeilingStripLights({ config }) {
+  const {
+    enabled,
+    stripCount,
+    stripSpacing,
+    stripLength,
+    stripWidth,
+    stripHeight,
+    stripColor,
+    stripIntensity,
+    center,
+  } = config
+
+  const strips = useMemo(() => {
+    if (!enabled) {
+      return []
+    }
+
+    const count = Math.max(1, Math.round(stripCount))
+    const start = -((count - 1) * stripSpacing) / 2
+
+    return Array.from({ length: count }, (_, index) => [
+      center[0],
+      stripHeight,
+      center[2] + start + index * stripSpacing,
+    ])
+  }, [center, enabled, stripCount, stripHeight, stripSpacing])
+
+  if (!enabled) {
+    return null
+  }
+
+  return (
+    <group>
+      {strips.map((position, index) => (
+        <CeilingStrip
+          key={`${index}-${position.join('-')}`}
+          position={position}
+          length={stripLength}
+          width={stripWidth}
+          color={stripColor}
+          intensity={stripIntensity}
+        />
+      ))}
+    </group>
+  )
+}
+
+function CameraEditorReporter({ active, onCameraUpdate }) {
+  const { camera } = useThree()
+  const direction = useRef(new Vector3())
+  const elapsedSinceUpdate = useRef(0)
+
+  useFrame((_, delta) => {
+    if (!active) {
+      return
+    }
+
+    elapsedSinceUpdate.current += delta
+
+    if (elapsedSinceUpdate.current < 0.08) {
+      return
+    }
+
+    elapsedSinceUpdate.current = 0
+    camera.getWorldDirection(direction.current)
+    onCameraUpdate({
+      position: [
+        Number(camera.position.x.toFixed(3)),
+        Number(camera.position.y.toFixed(3)),
+        Number(camera.position.z.toFixed(3)),
+      ],
+      yaw: Number(camera.rotation.y.toFixed(3)),
+      direction: [
+        Number(direction.current.x.toFixed(3)),
+        Number(direction.current.y.toFixed(3)),
+        Number(direction.current.z.toFixed(3)),
+      ],
+    })
+  })
+
+  return null
+}
+
+function findProductId(object) {
+  let current = object
+
+  while (current) {
+    if (current.userData?.productId) {
+      return current.userData.productId
+    }
+
+    current = current.parent
+  }
+
+  return null
+}
+
+function DemoEnvironment() {
+  return (
+    <group>
+      <mesh position={[0, -0.05, 0]} receiveShadow>
+        <cylinderGeometry args={[3.4, 3.4, 0.1, 96]} />
+        <meshStandardMaterial color="#101010" roughness={0.78} metalness={0.12} />
+      </mesh>
+
+      <mesh position={[0, 0.75, 0]} castShadow>
+        <torusKnotGeometry args={[0.62, 0.18, 180, 24]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.36} metalness={0.35} />
+      </mesh>
+
+      <mesh position={[-1.35, 0.44, -0.7]} castShadow>
+        <boxGeometry args={[0.56, 0.88, 0.56]} />
+        <meshStandardMaterial color="#2b2b2b" roughness={0.55} metalness={0.08} />
+      </mesh>
+
+      <mesh position={[1.35, 0.36, 0.85]} castShadow>
+        <sphereGeometry args={[0.42, 48, 48]} />
+        <meshStandardMaterial color="#c8c8c8" roughness={0.42} metalness={0.22} />
+      </mesh>
+    </group>
+  )
+}
+
+function Loader() {
+  return (
+    <Html center>
+      <div className="loader">
+        <span className="loader__dot" />
+        Loading environment
+      </div>
+    </Html>
+  )
+}
+
+function CurvedHorizon() {
+  return (
+    <mesh position={[0, 3.2, -9]} rotation={[0.28, 0, 0]}>
+      <sphereGeometry args={[12, 64, 32, 0, Math.PI * 2, 0.12, 1.18]} />
+      <meshBasicMaterial color="#090909" side={BackSide} transparent opacity={0.86} />
+    </mesh>
+  )
+}
+
+function CameraImpactShake({ impactCount }) {
+  const { camera } = useThree()
+  const shakeTime = useRef(0)
+  const previousOffset = useRef(new Vector3())
+
+  useEffect(() => {
+    if (impactCount > 0) {
+      camera.position.sub(previousOffset.current)
+      previousOffset.current.set(0, 0, 0)
+      shakeTime.current = IMPACT_SHAKE_DURATION
+    }
+  }, [camera, impactCount])
+
+  useFrame((_, delta) => {
+    if (previousOffset.current.lengthSq() > 0) {
+      camera.position.sub(previousOffset.current)
+      previousOffset.current.set(0, 0, 0)
+    }
+
+    if (shakeTime.current <= 0) {
+      return
+    }
+
+    shakeTime.current = Math.max(0, shakeTime.current - delta)
+    const progress = shakeTime.current / IMPACT_SHAKE_DURATION
+    const strength = IMPACT_SHAKE_STRENGTH * progress * progress
+
+    previousOffset.current.set(
+      (Math.random() - 0.5) * strength,
+      (Math.random() - 0.5) * strength * 0.65,
+      (Math.random() - 0.5) * strength,
+    )
+    camera.position.add(previousOffset.current)
+  })
+
+  return null
+}
+
+function IntroTextImpact({ started, onImpact }) {
+  const groupRef = useRef(null)
+  const velocity = useRef(0)
+  const elapsedAfterStart = useRef(0)
+  const [impacted, setImpacted] = useState(false)
+
+  useEffect(() => {
+    if (!groupRef.current) {
+      return
+    }
+
+    groupRef.current.position.set(...INTRO_TEXT_POSITION)
+    velocity.current = 0
+    elapsedAfterStart.current = 0
+    setImpacted(false)
+  }, [])
+
+  useFrame((_, delta) => {
+    if (!groupRef.current || !started || impacted) {
+      return
+    }
+
+    elapsedAfterStart.current += delta
+
+    if (elapsedAfterStart.current < INTRO_START_DELAY) {
+      return
+    }
+
+    velocity.current += INTRO_GRAVITY * delta
+    groupRef.current.position.y -= velocity.current * delta
+
+    if (groupRef.current.position.y <= INTRO_TEXT_IMPACT_Y) {
+      groupRef.current.position.y = INTRO_TEXT_IMPACT_Y
+      groupRef.current.rotation.x = -0.1
+      setImpacted(true)
+      onImpact()
+    }
+  })
+
+  return (
+    <group>
+      <group ref={groupRef} rotation={[0, Math.PI, 0]} scale={INTRO_TEXT_SCALE}>
+        <Suspense fallback={<IntroTextFallback />}>
+          <Text3D
+            font={helvetikerBold}
+            size={0.78}
+            height={0.24}
+            bevelEnabled
+            bevelSize={0.035}
+            bevelThickness={0.018}
+            bevelSegments={4}
+            curveSegments={16}
+            castShadow
+            receiveShadow
+          >
+            {INTRO_TEXT}
+            <meshStandardMaterial
+              color="#030303"
+              roughness={0.56}
+              metalness={0.18}
+              emissive="#000000"
+            />
+          </Text3D>
+        </Suspense>
+      </group>
+    </group>
+  )
+}
+
+function IntroTextFallback() {
+  return (
+    <mesh castShadow receiveShadow>
+      <boxGeometry args={[4.6, 0.82, 0.26]} />
+      <meshStandardMaterial color="#030303" roughness={0.58} metalness={0.18} />
+    </mesh>
+  )
+}
+
+function FirstPersonControls({ collisionMeshes, enabled }) {
+  const { camera, gl } = useThree()
+  const keys = useRef({})
+  const velocity = useRef(new Vector3())
+  const moveDirection = useRef(new Vector3())
+  const pendingMove = useRef(new Vector3())
+  const testMove = useRef(new Vector3())
+  const testPosition = useRef(new Vector3())
+  const forward = useRef(new Vector3())
+  const right = useRef(new Vector3())
+  const cameraEuler = useRef(new Euler(0, 0, 0, 'YXZ'))
+  const wallRaycaster = useRef(new Raycaster())
+  const floorRaycaster = useRef(new Raycaster())
+  const wallRayOrigin = useRef(new Vector3())
+  const floorRayOrigin = useRef(new Vector3())
+  const floorNormal = useRef(new Vector3())
+  const downDirection = useRef(new Vector3(0, -1, 0))
+  const activeTouchLook = useRef(null)
+  const collisionMeshesRef = useRef([])
+  const enabledRef = useRef(enabled)
+
+  useEffect(() => {
+    collisionMeshesRef.current = collisionMeshes
+  }, [collisionMeshes])
+
+  useEffect(() => {
+    enabledRef.current = enabled
+    if (!enabled) {
+      keys.current = {}
+      velocity.current.set(0, 0, 0)
+      if (document.pointerLockElement === gl.domElement) {
+        document.exitPointerLock?.()
+      }
+    }
+  }, [enabled, gl.domElement])
+
+  useEffect(() => {
+    camera.position.set(...START_POSITION)
+    camera.rotation.set(0, START_YAW, 0, 'YXZ')
+
+    const canvas = gl.domElement
+    const updateKey = (event, isPressed) => {
+      if (enabledRef.current || !isPressed) {
+        keys.current[event.code] = isPressed
+      }
+    }
+
+    const handleKeyDown = (event) => updateKey(event, true)
+    const handleKeyUp = (event) => updateKey(event, false)
+
+    const handleClick = () => {
+      if (enabledRef.current && document.pointerLockElement !== canvas) {
+        canvas.requestPointerLock?.()
+      }
+    }
+
+    const applyLookDelta = (movementX, movementY, sensitivity = 0.0022) => {
+      cameraEuler.current.setFromQuaternion(camera.quaternion)
+      cameraEuler.current.y -= movementX * sensitivity
+      cameraEuler.current.x -= movementY * sensitivity
+      cameraEuler.current.x = MathUtils.clamp(
+        cameraEuler.current.x,
+        -Math.PI / 2 + 0.04,
+        Math.PI / 2 - 0.04,
+      )
+      camera.quaternion.setFromEuler(cameraEuler.current)
+    }
+
+    const handleMouseMove = (event) => {
+      if (enabledRef.current && document.pointerLockElement === canvas) {
+        applyLookDelta(event.movementX, event.movementY)
+      }
+    }
+
+    const handlePointerDown = (event) => {
+      if (enabledRef.current && event.pointerType === 'touch') {
+        activeTouchLook.current = {
+          id: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+        }
+        canvas.setPointerCapture?.(event.pointerId)
+      }
+    }
+
+    const handlePointerMove = (event) => {
+      const touch = activeTouchLook.current
+      if (!touch || touch.id !== event.pointerId) {
+        return
+      }
+
+      applyLookDelta(event.clientX - touch.x, event.clientY - touch.y, 0.004)
+      touch.x = event.clientX
+      touch.y = event.clientY
+    }
+
+    const handlePointerEnd = (event) => {
+      if (activeTouchLook.current?.id === event.pointerId) {
+        activeTouchLook.current = null
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('mousemove', handleMouseMove)
+    canvas.addEventListener('click', handleClick)
+    canvas.addEventListener('pointerdown', handlePointerDown)
+    canvas.addEventListener('pointermove', handlePointerMove)
+    canvas.addEventListener('pointerup', handlePointerEnd)
+    canvas.addEventListener('pointercancel', handlePointerEnd)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('mousemove', handleMouseMove)
+      canvas.removeEventListener('click', handleClick)
+      canvas.removeEventListener('pointerdown', handlePointerDown)
+      canvas.removeEventListener('pointermove', handlePointerMove)
+      canvas.removeEventListener('pointerup', handlePointerEnd)
+      canvas.removeEventListener('pointercancel', handlePointerEnd)
+    }
+  }, [camera, gl.domElement])
+
+  const movementHitsCollider = (fromPosition, movement) => {
+    if (movement.lengthSq() === 0 || collisionMeshesRef.current.length === 0) {
+      return false
+    }
+
+    const direction = movement.clone().normalize()
+    const castDistance = movement.length() + BODY_RADIUS
+    const bodyHeights = [0.35, 0.95, 1.45]
+
+    for (const height of bodyHeights) {
+      wallRayOrigin.current.set(
+        fromPosition.x,
+        fromPosition.y - EYE_HEIGHT + height,
+        fromPosition.z,
+      )
+      wallRaycaster.current.set(wallRayOrigin.current, direction)
+      wallRaycaster.current.near = 0
+      wallRaycaster.current.far = castDistance
+
+      const hit = wallRaycaster.current.intersectObjects(collisionMeshesRef.current, true)[0]
+
+      if (hit && hit.distance <= castDistance) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  const getFloorY = (position) => {
+    if (collisionMeshesRef.current.length === 0) {
+      return MIN_FLOOR_Y
+    }
+
+    const currentFootY = position.y - EYE_HEIGHT
+    floorRayOrigin.current.set(position.x, position.y + FLOOR_RAY_HEIGHT, position.z)
+    floorRaycaster.current.set(floorRayOrigin.current, downDirection.current)
+    floorRaycaster.current.near = 0
+    floorRaycaster.current.far = FLOOR_RAY_DISTANCE
+
+    const floorHit = floorRaycaster.current
+      .intersectObjects(collisionMeshesRef.current, true)
+      .find((hit) => {
+        if (!hit.face) {
+          return false
+        }
+
+        floorNormal.current.copy(hit.face.normal).transformDirection(hit.object.matrixWorld)
+        return floorNormal.current.y > 0.45 && hit.point.y <= currentFootY + MAX_STEP_HEIGHT
+      })
+
+    if (!floorHit) {
+      return MIN_FLOOR_Y
+    }
+
+    return Math.max(MIN_FLOOR_Y, floorHit.point.y)
+  }
+
+  const applyCollidedMovement = (delta) => {
+    pendingMove.current.copy(velocity.current).multiplyScalar(delta)
+
+    testMove.current.set(pendingMove.current.x, 0, 0)
+    if (!movementHitsCollider(camera.position, testMove.current)) {
+      camera.position.add(testMove.current)
+    } else {
+      velocity.current.x = 0
+    }
+
+    testMove.current.set(0, 0, pendingMove.current.z)
+    if (!movementHitsCollider(camera.position, testMove.current)) {
+      camera.position.add(testMove.current)
+    } else {
+      velocity.current.z = 0
+    }
+
+    testPosition.current.copy(camera.position)
+    const floorY = getFloorY(testPosition.current)
+    camera.position.y = floorY + EYE_HEIGHT
+  }
+
+  useFrame((_, delta) => {
+    if (!enabledRef.current) {
+      velocity.current.set(0, 0, 0)
+      return
+    }
+
+    const pressed = keys.current
+    const inputX =
+      Number(Boolean(pressed.KeyD || pressed.ArrowRight)) -
+      Number(Boolean(pressed.KeyA || pressed.ArrowLeft))
+    const inputZ =
+      Number(Boolean(pressed.KeyW || pressed.ArrowUp)) -
+      Number(Boolean(pressed.KeyS || pressed.ArrowDown))
+    const isSprinting = Boolean(pressed.ShiftLeft || pressed.ShiftRight)
+    const speed = isSprinting ? 6.2 : 3.1
+
+    camera.getWorldDirection(forward.current)
+    forward.current.y = 0
+    forward.current.normalize()
+    right.current.set(-forward.current.z, 0, forward.current.x)
+
+    moveDirection.current.set(0, 0, 0)
+    moveDirection.current.addScaledVector(forward.current, inputZ)
+    moveDirection.current.addScaledVector(right.current, inputX)
+
+    if (moveDirection.current.lengthSq() > 0) {
+      moveDirection.current.normalize().multiplyScalar(speed)
+    }
+
+    const response = 1 - Math.exp(-12 * delta)
+    velocity.current.lerp(moveDirection.current, response)
+    applyCollidedMovement(delta)
+  })
+
+  const setVirtualKey = (code, isPressed) => {
+    if (enabledRef.current || !isPressed) {
+      keys.current[code] = isPressed
+    }
+  }
+
+  return (
+    <Html fullscreen style={{ pointerEvents: 'none' }}>
+      <div className="touch-controls" aria-label="Mobile walking controls">
+        <button
+          aria-label="Move forward"
+          className="touch-button touch-button--up"
+          onPointerDown={() => setVirtualKey('KeyW', true)}
+          onPointerUp={() => setVirtualKey('KeyW', false)}
+          onPointerCancel={() => setVirtualKey('KeyW', false)}
+        >
+          W
+        </button>
+        <button
+          aria-label="Move left"
+          className="touch-button touch-button--left"
+          onPointerDown={() => setVirtualKey('KeyA', true)}
+          onPointerUp={() => setVirtualKey('KeyA', false)}
+          onPointerCancel={() => setVirtualKey('KeyA', false)}
+        >
+          A
+        </button>
+        <button
+          aria-label="Move backward"
+          className="touch-button touch-button--down"
+          onPointerDown={() => setVirtualKey('KeyS', true)}
+          onPointerUp={() => setVirtualKey('KeyS', false)}
+          onPointerCancel={() => setVirtualKey('KeyS', false)}
+        >
+          S
+        </button>
+        <button
+          aria-label="Move right"
+          className="touch-button touch-button--right"
+          onPointerDown={() => setVirtualKey('KeyD', true)}
+          onPointerUp={() => setVirtualKey('KeyD', false)}
+          onPointerCancel={() => setVirtualKey('KeyD', false)}
+        >
+          D
+        </button>
+      </div>
+    </Html>
+  )
+}
+
+function ProductPreview({ product }) {
+  const hasModel = Boolean(product.model)
+
+  return (
+    <Canvas camera={{ position: [0, 1.05, 3], fov: 42 }} dpr={[1, 2]} gl={{ alpha: true }}>
+      <ambientLight intensity={0.65} />
+      <directionalLight intensity={2.4} position={[2.4, 3, 2]} />
+      <group position={[0, -0.35, 0]} rotation={product.rotation} scale={product.scale}>
+        {hasModel ? (
+          <Suspense fallback={<ProductFallback />}>
+            <ModelErrorBoundary fallback={<ProductFallback />}>
+              <ProductAsset product={product} />
+            </ModelErrorBoundary>
+          </Suspense>
+        ) : (
+          <ProductFallback />
+        )}
+      </group>
+    </Canvas>
+  )
+}
+
+function ProductPanel({ product, onClose }) {
+  if (!product) {
+    return null
+  }
+
+  const productMessage =
+    product.whatsappMessage ||
+    `Hello, I'm interested in purchasing ${product.name} priced at ${product.price}.`
+  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(productMessage)}`
+
+  return (
+    <div className="product-panel-backdrop" role="presentation">
+      <aside className="product-panel" aria-label={`${product.name} product details`}>
+        <div className="product-panel__preview">
+          <ProductPreview product={product} />
+        </div>
+        <div className="product-panel__content">
+          <p className="eyebrow">Gallery piece</p>
+          <h2>{product.name}</h2>
+          <p className="product-panel__description">{product.description}</p>
+          <p className="product-panel__price">{product.price}</p>
+          <div className="product-panel__actions">
+            <a className="buy-button" href={whatsappUrl} target="_blank" rel="noreferrer">
+              Buy Now
+            </a>
+            <button className="close-button" type="button" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function Experience({
+  introStarted,
+  placementMode,
+  lightingMode,
+  materialMode,
+  selectedProductId,
+  productOverrides,
+  spotlights,
+  selectedSpotlightId,
+  ceilingLights,
+  environmentMaterialConfig,
+  environmentMaterialPreview,
+  onCameraUpdate,
+  onEnvironmentMaterialTargets,
+}) {
+  const [collisionMeshes, setCollisionMeshes] = useState([])
+  const [hoveredProductId, setHoveredProductId] = useState(null)
+  const [activeProduct, setActiveProduct] = useState(null)
+  const [impactCount, setImpactCount] = useState(0)
+  const productGroups = useRef(new Map())
+  const controlsEnabled = !activeProduct
+  const productsForInteraction = useMemo(
+    () => products.map((product) => ({ ...product, ...productOverrides[product.id] })),
+    [productOverrides],
+  )
+
+  const handleIntroImpact = () => {
+    window.dispatchEvent(new Event('dor-intro-impact'))
+    setImpactCount((count) => count + 1)
+  }
+
+  const registerProductGroup = (id, group) => {
+    productGroups.current.set(id, group)
+
+    return () => {
+      productGroups.current.delete(id)
+    }
+  }
+
+  return (
+    <>
+      <Canvas
+        shadows
+        camera={{ position: START_POSITION, fov: 68 }}
+        dpr={[1, 2]}
+        gl={{ antialias: true, alpha: false }}
+      >
+        <color attach="background" args={['#050505']} />
+        <fog attach="fog" args={['#050505', 8, 30]} />
+        <ambientLight intensity={0.22} />
+        <directionalLight
+          castShadow
+          intensity={2.8}
+          position={[4.5, 7, 3.2]}
+          shadow-mapSize={[2048, 2048]}
+        />
+        <spotLight
+          castShadow
+          angle={0.32}
+          penumbra={0.8}
+          intensity={5.4}
+          position={[-3.8, 5.8, 1.5]}
+          color="#d9e4ff"
+        />
+        <pointLight intensity={1.4} position={[3, 1.8, -3.5]} color="#5f7cff" />
+        <pointLight intensity={1.1} position={[-4, 1.2, -2.5]} color="#ffffff" />
+        <CurvedHorizon />
+        <FloorFog />
+        <IntroTextImpact started={introStarted} onImpact={handleIntroImpact} />
+        <CameraImpactShake impactCount={impactCount} />
+        <CeilingStripLights config={ceilingLights} />
+        <SpotlightRig
+          spotlights={spotlights}
+          selectedSpotlightId={selectedSpotlightId}
+          lightingMode={lightingMode}
+        />
+
+        <Suspense fallback={<Loader />}>
+          <ModelErrorBoundary fallback={<DemoEnvironment />}>
+            <SceneModel
+              environmentMaterialConfig={environmentMaterialConfig}
+              environmentMaterialPreview={environmentMaterialPreview}
+              onCollisionMeshes={setCollisionMeshes}
+              onEnvironmentMaterialTargets={onEnvironmentMaterialTargets}
+            />
+          </ModelErrorBoundary>
+          <ProductGallery
+            hoveredProductId={hoveredProductId}
+            registerProductGroup={registerProductGroup}
+            productOverrides={productOverrides}
+            selectedProductId={selectedProductId}
+            placementMode={placementMode}
+          />
+          <Environment preset="night" />
+          <ContactShadows
+            opacity={0.35}
+            scale={12}
+            blur={2.8}
+            far={8}
+            position={[0, -0.03, 0]}
+          />
+        </Suspense>
+
+        <ProductInteractor
+          activeProduct={activeProduct}
+          productsForInteraction={productsForInteraction}
+          productGroups={productGroups}
+          placementMode={placementMode}
+          lightingMode={lightingMode}
+          materialMode={materialMode}
+          onHoverProduct={setHoveredProductId}
+          onOpenProduct={setActiveProduct}
+        />
+        <FirstPersonControls collisionMeshes={collisionMeshes} enabled={controlsEnabled} />
+        <CameraEditorReporter active={placementMode || lightingMode || materialMode} onCameraUpdate={onCameraUpdate} />
+      </Canvas>
+
+      {!activeProduct && <div className="crosshair" aria-hidden="true" />}
+      {!activeProduct && !placementMode && !lightingMode && !materialMode && hoveredProductId && (
+        <div className="inspect-prompt">Click to Inspect</div>
+      )}
+      <ProductPanel product={activeProduct} onClose={() => setActiveProduct(null)} />
+    </>
+  )
+}
+
+export default function App() {
+  const [audioStarted, setAudioStarted] = useState(false)
+  const [muted, setMuted] = useState(() => {
+    try {
+      return window.localStorage.getItem(AUDIO_MUTE_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const [ambienceVolume, setAmbienceVolume] = useState(DEFAULT_AMBIENCE_VOLUME)
+  const [placementMode, setPlacementMode] = useState(false)
+  const [lightingMode, setLightingMode] = useState(false)
+  const [materialMode, setMaterialMode] = useState(false)
+  const [selectedProductId, setSelectedProductId] = useState(products[0]?.id ?? '')
+  const [productOverrides, setProductOverrides] = useState({})
+  const [selectedSpotlightId, setSelectedSpotlightId] = useState(baseSpotlights[0]?.id ?? '')
+  const [spotlightOverrides, setSpotlightOverrides] = useState({})
+  const [draftSpotlights, setDraftSpotlights] = useState([])
+  const [ceilingLights, setCeilingLights] = useState(defaultCeilingLights)
+  const [environmentMaterialTargets, setEnvironmentMaterialTargets] = useState([])
+  const [environmentMaterialConfig, setEnvironmentMaterialConfig] = useState(defaultEnvironmentMaterials)
+  const [environmentMaterialPreview, setEnvironmentMaterialPreview] = useState(null)
+  const [cameraInfo, setCameraInfo] = useState({
+    position: START_POSITION,
+    yaw: START_YAW,
+    direction: [0, 0, 1],
+  })
+  const selectedProduct = products.find((product) => product.id === selectedProductId) ?? products[0]
+  const editedProduct = selectedProduct
+    ? { ...selectedProduct, ...productOverrides[selectedProduct.id] }
+    : null
+  const editedProducts = useMemo(
+    () => products.map((product) => ({ ...product, ...productOverrides[product.id] })),
+    [productOverrides],
+  )
+  const editedSpotlights = useMemo(
+    () => [...baseSpotlights, ...draftSpotlights].map((spotlight) => ({
+      ...spotlight,
+      ...spotlightOverrides[spotlight.id],
+    })),
+    [draftSpotlights, spotlightOverrides],
+  )
+
+  const updateEditedProduct = (id, patch) => {
+    setProductOverrides((current) => ({
+      ...current,
+      [id]: {
+        ...current[id],
+        ...patch,
+      },
+    }))
+  }
+
+  const createSpotlight = (spotlight) => {
+    setDraftSpotlights((current) => [...current, spotlight])
+    setSelectedSpotlightId(spotlight.id)
+  }
+
+  const updateEditedSpotlight = (id, patch) => {
+    setSpotlightOverrides((current) => ({
+      ...current,
+      [id]: {
+        ...current[id],
+        ...patch,
+      },
+    }))
+  }
+
+  const applyEnvironmentMaterialOverride = (scope, key, override) => {
+    setEnvironmentMaterialConfig((current) => {
+      if (scope === 'environment') {
+        return {
+          ...current,
+          globalOverride: override,
+        }
+      }
+
+      if (scope === 'mesh') {
+        return {
+          ...current,
+          meshOverrides: {
+            ...(current.meshOverrides ?? {}),
+            [key]: override,
+          },
+        }
+      }
+
+      return {
+        ...current,
+        materialOverrides: {
+          ...(current.materialOverrides ?? {}),
+          [key]: override,
+        },
+      }
+    })
+  }
+
+  const resetEnvironmentMaterialOverride = (scope, key) => {
+    setEnvironmentMaterialConfig((current) => {
+      if (scope === 'environment') {
+        return {
+          ...current,
+          globalOverride: null,
+        }
+      }
+
+      if (scope === 'mesh') {
+        const nextMeshOverrides = { ...(current.meshOverrides ?? {}) }
+        delete nextMeshOverrides[key]
+
+        return {
+          ...current,
+          meshOverrides: nextMeshOverrides,
+        }
+      }
+
+      const nextMaterialOverrides = { ...(current.materialOverrides ?? {}) }
+      delete nextMaterialOverrides[key]
+
+      return {
+        ...current,
+        materialOverrides: nextMaterialOverrides,
+      }
+    })
+  }
+
+  useEffect(() => {
+    if (audioStarted) {
+      return undefined
+    }
+
+    const startAudio = () => setAudioStarted(true)
+
+    window.addEventListener('pointerdown', startAudio, { once: true })
+    window.addEventListener('keydown', startAudio, { once: true })
+
+    return () => {
+      window.removeEventListener('pointerdown', startAudio)
+      window.removeEventListener('keydown', startAudio)
+    }
+  }, [audioStarted])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUDIO_MUTE_STORAGE_KEY, String(muted))
+    } catch {
+      // localStorage can be unavailable in private browsing modes.
+    }
+  }, [muted])
+
+  return (
+    <main className="app-shell">
+      <AmbientAudio started={audioStarted} muted={muted} volume={ambienceVolume} />
+      <Experience
+        introStarted={audioStarted}
+        placementMode={placementMode}
+        lightingMode={lightingMode}
+        materialMode={materialMode}
+        selectedProductId={selectedProductId}
+        productOverrides={productOverrides}
+        spotlights={editedSpotlights}
+        selectedSpotlightId={selectedSpotlightId}
+        ceilingLights={ceilingLights}
+        environmentMaterialConfig={environmentMaterialConfig}
+        environmentMaterialPreview={environmentMaterialPreview}
+        onCameraUpdate={setCameraInfo}
+        onEnvironmentMaterialTargets={setEnvironmentMaterialTargets}
+      />
+
+      <section className="ui-overlay" aria-label="3Dexpo controls and status">
+        <div>
+          <p className="eyebrow">3Dexpo</p>
+          <h1>Walk the environment</h1>
+        </div>
+        <p className="status">Click to look. Use WASD or arrows to walk. Hold Shift to move faster.</p>
+      </section>
+      <div className="audio-controls" aria-label="Audio controls">
+        <button className="audio-toggle" type="button" onClick={() => setMuted((isMuted) => !isMuted)}>
+          {muted ? 'Unmute' : 'Mute'}
+        </button>
+        <label className="volume-control">
+          <span>Volume</span>
+          <input
+            aria-label="Ambience volume"
+            type="range"
+            min="0"
+            max="0.25"
+            step="0.01"
+            value={ambienceVolume}
+            onChange={(event) => setAmbienceVolume(Number(event.target.value))}
+          />
+        </label>
+      </div>
+      <InventoryEditor
+        cameraInfo={cameraInfo}
+        enabled={placementMode}
+        onToggleEnabled={() => setPlacementMode((isEnabled) => !isEnabled)}
+        product={editedProduct}
+        products={products}
+        selectedProductId={selectedProduct?.id ?? ''}
+        onSelectProduct={setSelectedProductId}
+        onUpdateProduct={updateEditedProduct}
+      />
+      <SpotlightEditor
+        cameraInfo={cameraInfo}
+        enabled={lightingMode}
+        onToggleEnabled={() => setLightingMode((isEnabled) => !isEnabled)}
+        products={editedProducts}
+        selectedProductId={selectedProductId}
+        onSelectProduct={setSelectedProductId}
+        spotlights={editedSpotlights}
+        selectedSpotlightId={selectedSpotlightId}
+        onSelectSpotlight={setSelectedSpotlightId}
+        onCreateSpotlight={createSpotlight}
+        onUpdateSpotlight={updateEditedSpotlight}
+        ceilingLights={ceilingLights}
+        onUpdateCeilingLights={setCeilingLights}
+      />
+      <EnvironmentMaterialsEditor
+        enabled={materialMode}
+        onToggleEnabled={() => setMaterialMode((isEnabled) => !isEnabled)}
+        targets={environmentMaterialTargets}
+        config={environmentMaterialConfig}
+        preview={environmentMaterialPreview}
+        onPreview={setEnvironmentMaterialPreview}
+        onApply={applyEnvironmentMaterialOverride}
+        onReset={resetEnvironmentMaterialOverride}
+      />
+    </main>
+  )
+}
+
+useGLTF.preload(MODEL_PATH)

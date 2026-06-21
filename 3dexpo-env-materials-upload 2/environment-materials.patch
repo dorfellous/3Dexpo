@@ -1,0 +1,922 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index d062446..08ae3ad 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -1,6 +1,16 @@
+ import { Component, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+ import { Canvas, useFrame, useThree } from '@react-three/fiber'
+-import { BackSide, Euler, MathUtils, Raycaster, Vector2, Vector3 } from 'three'
++import {
++  BackSide,
++  Color,
++  Euler,
++  MathUtils,
++  Raycaster,
++  RepeatWrapping,
++  SRGBColorSpace,
++  Vector2,
++  Vector3,
++} from 'three'
+ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
+ import {
+   ContactShadows,
+@@ -8,13 +18,20 @@ import {
+   Html,
+   Text3D,
+   useGLTF,
++  useTexture,
+ } from '@react-three/drei'
+ import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json'
+ import products from './data/products'
+ import baseSpotlights from './data/spotlights'
+ import defaultCeilingLights from './data/ceilingLights'
++import defaultEnvironmentMaterials from './data/environmentMaterials'
+ import InventoryEditor from './components/InventoryEditor'
+ import SpotlightEditor from './components/SpotlightEditor'
++import EnvironmentMaterialsEditor from './components/EnvironmentMaterialsEditor'
++import metal014ColorUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Color.png'
++import metal014MetalnessUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Metalness.png'
++import metal014NormalUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_NormalGL.png'
++import metal014RoughnessUrl from '../Metal014_1K-PNG/Metal014_1K-PNG_Roughness.png'
+ 
+ const MODEL_PATH = `${import.meta.env.BASE_URL}models/scene.glb`
+ const AMBIENCE_PATH = `${import.meta.env.BASE_URL}audio/ambience.mp3`
+@@ -62,25 +79,207 @@ class ModelErrorBoundary extends Component {
+   }
+ }
+ 
+-function SceneModel({ onCollisionMeshes }) {
++function getMaterialList(material) {
++  return Array.isArray(material) ? material.filter(Boolean) : [material].filter(Boolean)
++}
++
++function mergeOverrides(...overrides) {
++  return overrides.reduce((merged, override) => {
++    if (!override) {
++      return merged
++    }
++
++    return {
++      ...merged,
++      ...override,
++      ...(override.textureSet ? { textureSet: { ...override.textureSet } } : {}),
++    }
++  }, null)
++}
++
++function getPreviewOverride(preview, meshName, materialName) {
++  if (!preview) {
++    return null
++  }
++
++  if (preview.scope === 'environment') {
++    return preview.override
++  }
++
++  if (preview.scope === 'mesh' && preview.key === meshName) {
++    return preview.override
++  }
++
++  if (preview.scope === 'material' && preview.key === materialName) {
++    return preview.override
++  }
++
++  return null
++}
++
++function applyMaterialOverride(material, override, textureSets) {
++  if (!override) {
++    material.needsUpdate = true
++    return
++  }
++
++  if (override.color && material.color) {
++    material.color = new Color(override.color)
++  }
++
++  if (typeof override.roughness === 'number' && 'roughness' in material) {
++    material.roughness = override.roughness
++  }
++
++  if (typeof override.metalness === 'number' && 'metalness' in material) {
++    material.metalness = override.metalness
++  }
++
++  if (override.emissive && material.emissive) {
++    material.emissive = new Color(override.emissive)
++  }
++
++  if (typeof override.emissiveIntensity === 'number' && 'emissiveIntensity' in material) {
++    material.emissiveIntensity = override.emissiveIntensity
++  }
++
++  if (typeof override.opacity === 'number') {
++    material.opacity = override.opacity
++    material.transparent = override.opacity < 1
++  }
++
++  if (override.textureSet) {
++    const textures = textureSets.metal014
++    material.map = textures.map ?? null
++    material.normalMap = textures.normalMap ?? null
++    material.roughnessMap = textures.roughnessMap ?? null
++    material.metalnessMap = textures.metalnessMap ?? null
++    material.aoMap = textures.aoMap ?? null
++  }
++
++  material.needsUpdate = true
++}
++
++function SceneModel({
++  environmentMaterialConfig,
++  environmentMaterialPreview,
++  onCollisionMeshes,
++  onEnvironmentMaterialTargets,
++}) {
+   const gltf = useGLTF(MODEL_PATH)
++  const metal014Textures = useTexture({
++    map: metal014ColorUrl,
++    normalMap: metal014NormalUrl,
++    roughnessMap: metal014RoughnessUrl,
++    metalnessMap: metal014MetalnessUrl,
++  })
++  const originalMaterialsRef = useRef(new Map())
++  const scene = useMemo(() => {
++    const clonedScene = gltf.scene.clone(true)
++    originalMaterialsRef.current = new Map()
++
++    clonedScene.traverse((child) => {
++      if (!child.isMesh) {
++        return
++      }
++
++      if (Array.isArray(child.material)) {
++        child.material = child.material.map((material) => material.clone())
++      } else if (child.material) {
++        child.material = child.material.clone()
++      }
++
++      getMaterialList(child.material).forEach((material) => {
++        originalMaterialsRef.current.set(material.uuid, material.clone())
++      })
++    })
++
++    return clonedScene
++  }, [gltf.scene])
++
++  useEffect(() => {
++    Object.values(metal014Textures).forEach((texture) => {
++      texture.wrapS = RepeatWrapping
++      texture.wrapT = RepeatWrapping
++      texture.repeat.set(2.5, 2.5)
++      texture.needsUpdate = true
++    })
++
++    if (metal014Textures.map) {
++      metal014Textures.map.colorSpace = SRGBColorSpace
++    }
++  }, [metal014Textures])
+ 
+   useEffect(() => {
+     const collisionMeshes = []
++    const targets = []
++    let meshIndex = 0
+ 
+-    gltf.scene.traverse((child) => {
++    scene.traverse((child) => {
+       if (child.isMesh) {
++        const meshName = child.name || `Environment Mesh ${meshIndex + 1}`
++        child.userData.environmentMeshName = meshName
+         child.castShadow = true
+         child.receiveShadow = true
+         child.updateWorldMatrix(true, false)
+         collisionMeshes.push(child)
++
++        getMaterialList(child.material).forEach((material, materialIndex) => {
++          const materialName = material.name || `${meshName} Material ${materialIndex + 1}`
++          material.userData.environmentMaterialName = materialName
++          targets.push({
++            meshName,
++            materialName,
++          })
++        })
++        meshIndex += 1
+       }
+     })
+ 
++    console.groupCollapsed('3Dexpo environment GLB meshes and materials')
++    console.table(targets)
++    console.groupEnd()
++
++    onEnvironmentMaterialTargets(targets)
+     onCollisionMeshes(collisionMeshes)
+-  }, [gltf.scene, onCollisionMeshes])
++  }, [onCollisionMeshes, onEnvironmentMaterialTargets, scene])
++
++  useEffect(() => {
++    const textureSets = {
++      metal014: metal014Textures,
++    }
++
++    scene.traverse((child) => {
++      if (!child.isMesh) {
++        return
++      }
++
++      const meshName = child.userData.environmentMeshName || child.name || ''
++
++      getMaterialList(child.material).forEach((material, materialIndex) => {
++        const originalMaterial = originalMaterialsRef.current.get(material.uuid)
++        const materialName =
++          material.userData.environmentMaterialName ||
++          material.name ||
++          `${meshName} Material ${materialIndex + 1}`
++
++        if (originalMaterial) {
++          material.copy(originalMaterial)
++        }
++
++        const override = mergeOverrides(
++          environmentMaterialConfig.globalOverride,
++          environmentMaterialConfig.materialOverrides?.[materialName],
++          environmentMaterialConfig.meshOverrides?.[meshName],
++          getPreviewOverride(environmentMaterialPreview, meshName, materialName),
++        )
++
++        applyMaterialOverride(material, override, textureSets)
++      })
++    })
++  }, [environmentMaterialConfig, environmentMaterialPreview, metal014Textures, scene])
+ 
+-  return <primitive object={gltf.scene} />
++  return <primitive object={scene} />
+ }
+ 
+ function resolvePublicAssetPath(path) {
+@@ -378,6 +577,7 @@ function ProductInteractor({
+   productGroups,
+   placementMode,
+   lightingMode,
++  materialMode,
+   onHoverProduct,
+   onOpenProduct,
+ }) {
+@@ -387,7 +587,7 @@ function ProductInteractor({
+   const hoveredProductRef = useRef(null)
+ 
+   useFrame(() => {
+-    if (activeProduct || placementMode || lightingMode) {
++    if (activeProduct || placementMode || lightingMode || materialMode) {
+       if (hoveredProductRef.current) {
+         hoveredProductRef.current = null
+         onHoverProduct(null)
+@@ -416,7 +616,7 @@ function ProductInteractor({
+   useEffect(() => {
+     const canvas = gl.domElement
+     const handleClick = () => {
+-      if (placementMode || lightingMode) {
++      if (placementMode || lightingMode || materialMode) {
+         return
+       }
+ 
+@@ -431,7 +631,7 @@ function ProductInteractor({
+     return () => {
+       canvas.removeEventListener('click', handleClick)
+     }
+-  }, [activeProduct, gl.domElement, lightingMode, onOpenProduct, placementMode, productsForInteraction])
++  }, [activeProduct, gl.domElement, lightingMode, materialMode, onOpenProduct, placementMode, productsForInteraction])
+ 
+   return null
+ }
+@@ -1163,12 +1363,16 @@ function Experience({
+   introStarted,
+   placementMode,
+   lightingMode,
++  materialMode,
+   selectedProductId,
+   productOverrides,
+   spotlights,
+   selectedSpotlightId,
+   ceilingLights,
++  environmentMaterialConfig,
++  environmentMaterialPreview,
+   onCameraUpdate,
++  onEnvironmentMaterialTargets,
+ }) {
+   const [collisionMeshes, setCollisionMeshes] = useState([])
+   const [hoveredProductId, setHoveredProductId] = useState(null)
+@@ -1234,7 +1438,12 @@ function Experience({
+ 
+         <Suspense fallback={<Loader />}>
+           <ModelErrorBoundary fallback={<DemoEnvironment />}>
+-            <SceneModel onCollisionMeshes={setCollisionMeshes} />
++            <SceneModel
++              environmentMaterialConfig={environmentMaterialConfig}
++              environmentMaterialPreview={environmentMaterialPreview}
++              onCollisionMeshes={setCollisionMeshes}
++              onEnvironmentMaterialTargets={onEnvironmentMaterialTargets}
++            />
+           </ModelErrorBoundary>
+           <ProductGallery
+             hoveredProductId={hoveredProductId}
+@@ -1259,15 +1468,16 @@ function Experience({
+           productGroups={productGroups}
+           placementMode={placementMode}
+           lightingMode={lightingMode}
++          materialMode={materialMode}
+           onHoverProduct={setHoveredProductId}
+           onOpenProduct={setActiveProduct}
+         />
+         <FirstPersonControls collisionMeshes={collisionMeshes} enabled={controlsEnabled} />
+-        <CameraEditorReporter active={placementMode || lightingMode} onCameraUpdate={onCameraUpdate} />
++        <CameraEditorReporter active={placementMode || lightingMode || materialMode} onCameraUpdate={onCameraUpdate} />
+       </Canvas>
+ 
+       {!activeProduct && <div className="crosshair" aria-hidden="true" />}
+-      {!activeProduct && !placementMode && !lightingMode && hoveredProductId && (
++      {!activeProduct && !placementMode && !lightingMode && !materialMode && hoveredProductId && (
+         <div className="inspect-prompt">Click to Inspect</div>
+       )}
+       <ProductPanel product={activeProduct} onClose={() => setActiveProduct(null)} />
+@@ -1287,12 +1497,16 @@ export default function App() {
+   const [ambienceVolume, setAmbienceVolume] = useState(DEFAULT_AMBIENCE_VOLUME)
+   const [placementMode, setPlacementMode] = useState(false)
+   const [lightingMode, setLightingMode] = useState(false)
++  const [materialMode, setMaterialMode] = useState(false)
+   const [selectedProductId, setSelectedProductId] = useState(products[0]?.id ?? '')
+   const [productOverrides, setProductOverrides] = useState({})
+   const [selectedSpotlightId, setSelectedSpotlightId] = useState(baseSpotlights[0]?.id ?? '')
+   const [spotlightOverrides, setSpotlightOverrides] = useState({})
+   const [draftSpotlights, setDraftSpotlights] = useState([])
+   const [ceilingLights, setCeilingLights] = useState(defaultCeilingLights)
++  const [environmentMaterialTargets, setEnvironmentMaterialTargets] = useState([])
++  const [environmentMaterialConfig, setEnvironmentMaterialConfig] = useState(defaultEnvironmentMaterials)
++  const [environmentMaterialPreview, setEnvironmentMaterialPreview] = useState(null)
+   const [cameraInfo, setCameraInfo] = useState({
+     position: START_POSITION,
+     yaw: START_YAW,
+@@ -1339,6 +1553,64 @@ export default function App() {
+     }))
+   }
+ 
++  const applyEnvironmentMaterialOverride = (scope, key, override) => {
++    setEnvironmentMaterialConfig((current) => {
++      if (scope === 'environment') {
++        return {
++          ...current,
++          globalOverride: override,
++        }
++      }
++
++      if (scope === 'mesh') {
++        return {
++          ...current,
++          meshOverrides: {
++            ...(current.meshOverrides ?? {}),
++            [key]: override,
++          },
++        }
++      }
++
++      return {
++        ...current,
++        materialOverrides: {
++          ...(current.materialOverrides ?? {}),
++          [key]: override,
++        },
++      }
++    })
++  }
++
++  const resetEnvironmentMaterialOverride = (scope, key) => {
++    setEnvironmentMaterialConfig((current) => {
++      if (scope === 'environment') {
++        return {
++          ...current,
++          globalOverride: null,
++        }
++      }
++
++      if (scope === 'mesh') {
++        const nextMeshOverrides = { ...(current.meshOverrides ?? {}) }
++        delete nextMeshOverrides[key]
++
++        return {
++          ...current,
++          meshOverrides: nextMeshOverrides,
++        }
++      }
++
++      const nextMaterialOverrides = { ...(current.materialOverrides ?? {}) }
++      delete nextMaterialOverrides[key]
++
++      return {
++        ...current,
++        materialOverrides: nextMaterialOverrides,
++      }
++    })
++  }
++
+   useEffect(() => {
+     if (audioStarted) {
+       return undefined
+@@ -1370,12 +1642,16 @@ export default function App() {
+         introStarted={audioStarted}
+         placementMode={placementMode}
+         lightingMode={lightingMode}
++        materialMode={materialMode}
+         selectedProductId={selectedProductId}
+         productOverrides={productOverrides}
+         spotlights={editedSpotlights}
+         selectedSpotlightId={selectedSpotlightId}
+         ceilingLights={ceilingLights}
++        environmentMaterialConfig={environmentMaterialConfig}
++        environmentMaterialPreview={environmentMaterialPreview}
+         onCameraUpdate={setCameraInfo}
++        onEnvironmentMaterialTargets={setEnvironmentMaterialTargets}
+       />
+ 
+       <section className="ui-overlay" aria-label="3Dexpo controls and status">
+@@ -1427,6 +1703,16 @@ export default function App() {
+         ceilingLights={ceilingLights}
+         onUpdateCeilingLights={setCeilingLights}
+       />
++      <EnvironmentMaterialsEditor
++        enabled={materialMode}
++        onToggleEnabled={() => setMaterialMode((isEnabled) => !isEnabled)}
++        targets={environmentMaterialTargets}
++        config={environmentMaterialConfig}
++        preview={environmentMaterialPreview}
++        onPreview={setEnvironmentMaterialPreview}
++        onApply={applyEnvironmentMaterialOverride}
++        onReset={resetEnvironmentMaterialOverride}
++      />
+     </main>
+   )
+ }
+diff --git a/src/components/EnvironmentMaterialsEditor.jsx b/src/components/EnvironmentMaterialsEditor.jsx
+new file mode 100644
+index 0000000..f7d7ce1
+--- /dev/null
++++ b/src/components/EnvironmentMaterialsEditor.jsx
+@@ -0,0 +1,324 @@
++import { useEffect, useMemo, useState } from 'react'
++import { environmentMaterialPresets } from '../data/environmentMaterials'
++
++const NUMBER_STEP = 0.05
++const EMISSIVE_STEP = 0.05
++
++function formatNumber(value) {
++  return Number(value ?? 0).toFixed(3)
++}
++
++function quote(value) {
++  return JSON.stringify(value ?? '')
++}
++
++function createOverrideConfig(config) {
++  const meshEntries = Object.entries(config.meshOverrides ?? {})
++  const materialEntries = Object.entries(config.materialOverrides ?? {})
++
++  const formatOverride = (override, indent = '    ') => {
++    const lines = ['{']
++    if (override.color) lines.push(`${indent}color: ${quote(override.color)},`)
++    if (typeof override.roughness === 'number') lines.push(`${indent}roughness: ${formatNumber(override.roughness)},`)
++    if (typeof override.metalness === 'number') lines.push(`${indent}metalness: ${formatNumber(override.metalness)},`)
++    if (override.emissive) lines.push(`${indent}emissive: ${quote(override.emissive)},`)
++    if (typeof override.emissiveIntensity === 'number') {
++      lines.push(`${indent}emissiveIntensity: ${formatNumber(override.emissiveIntensity)},`)
++    }
++    if (typeof override.opacity === 'number') lines.push(`${indent}opacity: ${formatNumber(override.opacity)},`)
++    if (override.textureSet) {
++      lines.push(`${indent}textureSet: {`)
++      Object.entries(override.textureSet).forEach(([key, value]) => {
++        lines.push(`${indent}  ${key}: ${quote(value)},`)
++      })
++      lines.push(`${indent}},`)
++    }
++    lines.push(`${indent.slice(2)}}`)
++    return lines.join('\n')
++  }
++
++  return `const environmentMaterials = {
++  meshOverrides: {${meshEntries.length ? '\n' : ''}${meshEntries
++    .map(([key, override]) => `    ${quote(key)}: ${formatOverride(override, '      ')},`)
++    .join('\n')}${meshEntries.length ? '\n  ' : ''}},
++  materialOverrides: {${materialEntries.length ? '\n' : ''}${materialEntries
++    .map(([key, override]) => `    ${quote(key)}: ${formatOverride(override, '      ')},`)
++    .join('\n')}${materialEntries.length ? '\n  ' : ''}},
++  globalOverride: ${config.globalOverride ? formatOverride(config.globalOverride, '    ') : 'null'},
++}
++
++export default environmentMaterials`
++}
++
++function cloneOverride(override) {
++  return {
++    color: override.color ?? '#111111',
++    roughness: Number(override.roughness ?? 0.7),
++    metalness: Number(override.metalness ?? 0.1),
++    emissive: override.emissive ?? '#000000',
++    emissiveIntensity: Number(override.emissiveIntensity ?? 0),
++    opacity: Number(override.opacity ?? 1),
++    ...(override.textureSet ? { textureSet: { ...override.textureSet } } : {}),
++  }
++}
++
++function getTargetKey(scope, meshName, materialName) {
++  if (scope === 'mesh') return meshName
++  if (scope === 'material') return materialName
++  return 'environment'
++}
++
++export default function EnvironmentMaterialsEditor({
++  enabled,
++  onToggleEnabled,
++  targets,
++  config,
++  preview,
++  onPreview,
++  onApply,
++  onReset,
++}) {
++  const [copyState, setCopyState] = useState('')
++  const [scope, setScope] = useState('mesh')
++  const [selectedMesh, setSelectedMesh] = useState('')
++  const [selectedMaterial, setSelectedMaterial] = useState('')
++  const [draft, setDraft] = useState(() => cloneOverride(environmentMaterialPresets.darkConcrete))
++  const [previewEnabled, setPreviewEnabled] = useState(false)
++
++  const meshes = useMemo(
++    () => [...new Set(targets.map((target) => target.meshName))].filter(Boolean),
++    [targets],
++  )
++  const materials = useMemo(
++    () => [...new Set(targets.map((target) => target.materialName))].filter(Boolean),
++    [targets],
++  )
++
++  useEffect(() => {
++    if (!selectedMesh && meshes[0]) setSelectedMesh(meshes[0])
++  }, [meshes, selectedMesh])
++
++  useEffect(() => {
++    if (!selectedMaterial && materials[0]) setSelectedMaterial(materials[0])
++  }, [materials, selectedMaterial])
++
++  useEffect(() => {
++    if (!previewEnabled) {
++      onPreview(null)
++      return
++    }
++
++    onPreview({
++      scope,
++      key: getTargetKey(scope, selectedMesh, selectedMaterial),
++      override: cloneOverride(draft),
++    })
++  }, [draft, onPreview, previewEnabled, scope, selectedMaterial, selectedMesh])
++
++  const updateDraft = (patch) => {
++    setDraft((current) => ({
++      ...current,
++      ...patch,
++    }))
++  }
++
++  const updateNumber = (key, amount, min = 0, max = 1) => {
++    updateDraft({
++      [key]: Math.min(max, Math.max(min, Number((draft[key] + amount).toFixed(3)))),
++    })
++  }
++
++  const applyPreset = (preset) => {
++    setDraft(cloneOverride(preset))
++    setPreviewEnabled(true)
++  }
++
++  const applyDraft = () => {
++    onApply(scope, getTargetKey(scope, selectedMesh, selectedMaterial), cloneOverride(draft))
++    setCopyState('')
++  }
++
++  const resetTarget = () => {
++    onReset(scope, getTargetKey(scope, selectedMesh, selectedMaterial))
++    setPreviewEnabled(false)
++    setCopyState('')
++  }
++
++  const copyConfig = async () => {
++    const text = createOverrideConfig(config)
++
++    try {
++      await navigator.clipboard.writeText(text)
++      setCopyState('Copied')
++    } catch {
++      setCopyState('Select and copy from the box')
++    }
++  }
++
++  const handlePointerDown = () => {
++    if (document.pointerLockElement) {
++      document.exitPointerLock?.()
++    }
++  }
++
++  return (
++    <aside className="environment-materials-editor" onPointerDown={handlePointerDown}>
++      <div className="inventory-editor__header">
++        <div>
++          <p className="eyebrow">Environment</p>
++          <h2>Materials</h2>
++        </div>
++        <button className="editor-button" type="button" onClick={onToggleEnabled}>
++          {enabled ? 'Done' : 'Materials'}
++        </button>
++      </div>
++
++      {enabled && (
++        <>
++          <div className="editor-readout">
++            <span>Meshes</span>
++            <code>{meshes.length}</code>
++          </div>
++          <div className="editor-readout">
++            <span>Materials</span>
++            <code>{materials.length}</code>
++          </div>
++
++          <label className="editor-field">
++            <span>Apply to</span>
++            <select value={scope} onChange={(event) => setScope(event.target.value)}>
++              <option value="mesh">Selected mesh</option>
++              <option value="material">Selected material</option>
++              <option value="environment">Entire environment</option>
++            </select>
++          </label>
++
++          <label className="editor-field">
++            <span>Mesh</span>
++            <select value={selectedMesh} onChange={(event) => setSelectedMesh(event.target.value)}>
++              {meshes.map((mesh) => (
++                <option key={mesh} value={mesh}>
++                  {mesh}
++                </option>
++              ))}
++            </select>
++          </label>
++
++          <label className="editor-field">
++            <span>Material</span>
++            <select value={selectedMaterial} onChange={(event) => setSelectedMaterial(event.target.value)}>
++              {materials.map((material) => (
++                <option key={material} value={material}>
++                  {material}
++                </option>
++              ))}
++            </select>
++          </label>
++
++          <div className="editor-grid">
++            {Object.values(environmentMaterialPresets).map((preset) => (
++              <button key={preset.name} type="button" onClick={() => applyPreset(preset)}>
++                {preset.name}
++              </button>
++            ))}
++            <button type="button" onClick={resetTarget}>
++              Reset Original
++            </button>
++          </div>
++
++          <label className="editor-field">
++            <span>Color</span>
++            <input type="color" value={draft.color} onChange={(event) => updateDraft({ color: event.target.value })} />
++          </label>
++          <label className="editor-field">
++            <span>Emissive</span>
++            <input
++              type="color"
++              value={draft.emissive}
++              onChange={(event) => updateDraft({ emissive: event.target.value })}
++            />
++          </label>
++
++          <div className="editor-readout">
++            <span>Roughness</span>
++            <code>{formatNumber(draft.roughness)}</code>
++          </div>
++          <div className="editor-readout">
++            <span>Metalness</span>
++            <code>{formatNumber(draft.metalness)}</code>
++          </div>
++          <div className="editor-readout">
++            <span>Emissive</span>
++            <code>{formatNumber(draft.emissiveIntensity)}</code>
++          </div>
++          <div className="editor-readout">
++            <span>Opacity</span>
++            <code>{formatNumber(draft.opacity)}</code>
++          </div>
++          {draft.textureSet && (
++            <div className="editor-readout">
++              <span>Textures</span>
++              <code>{Object.keys(draft.textureSet).join(', ')}</code>
++            </div>
++          )}
++
++          <div className="editor-grid">
++            <button type="button" onClick={() => updateNumber('roughness', -NUMBER_STEP)}>
++              Rough -
++            </button>
++            <button type="button" onClick={() => updateNumber('roughness', NUMBER_STEP)}>
++              Rough +
++            </button>
++            <button type="button" onClick={() => updateNumber('metalness', -NUMBER_STEP)}>
++              Metal -
++            </button>
++            <button type="button" onClick={() => updateNumber('metalness', NUMBER_STEP)}>
++              Metal +
++            </button>
++            <button type="button" onClick={() => updateNumber('emissiveIntensity', -EMISSIVE_STEP, 0, 5)}>
++              Glow -
++            </button>
++            <button type="button" onClick={() => updateNumber('emissiveIntensity', EMISSIVE_STEP, 0, 5)}>
++              Glow +
++            </button>
++            <button type="button" onClick={() => updateNumber('opacity', -NUMBER_STEP)}>
++              Opacity -
++            </button>
++            <button type="button" onClick={() => updateNumber('opacity', NUMBER_STEP)}>
++              Opacity +
++            </button>
++          </div>
++
++          <label className="editor-field editor-field--inline">
++            <span>Preview mode</span>
++            <input
++              type="checkbox"
++              checked={previewEnabled}
++              onChange={(event) => setPreviewEnabled(event.target.checked)}
++            />
++          </label>
++          <div className="editor-grid">
++            <button type="button" onClick={applyDraft}>
++              Apply Permanently
++            </button>
++            <button type="button" onClick={() => onPreview(null)}>
++              Clear Preview
++            </button>
++          </div>
++
++          <button className="copy-config-button" type="button" onClick={copyConfig}>
++            Copy Material Config
++          </button>
++          {copyState && <p className="editor-copy-state">{copyState}</p>}
++          <textarea
++            className="editor-config"
++            readOnly
++            value={createOverrideConfig(config)}
++            aria-label="Ready to paste environment material config"
++          />
++          {preview && <p className="editor-copy-state">Previewing {preview.scope}</p>}
++        </>
++      )}
++    </aside>
++  )
++}
+diff --git a/src/data/environmentMaterials.js b/src/data/environmentMaterials.js
+new file mode 100644
+index 0000000..d8f140d
+--- /dev/null
++++ b/src/data/environmentMaterials.js
+@@ -0,0 +1,58 @@
++const environmentMaterials = {
++  meshOverrides: {},
++  materialOverrides: {},
++  globalOverride: null,
++}
++
++export const environmentMaterialPresets = {
++  darkConcrete: {
++    name: 'Dark Concrete',
++    color: '#171717',
++    roughness: 0.86,
++    metalness: 0.02,
++    emissive: '#000000',
++    emissiveIntensity: 0,
++    opacity: 1,
++  },
++  matteBlackMetal: {
++    name: 'Matte Black Metal',
++    color: '#050505',
++    roughness: 0.58,
++    metalness: 0.72,
++    emissive: '#000000',
++    emissiveIntensity: 0,
++    opacity: 1,
++  },
++  dirtyGrayIndustrial: {
++    name: 'Dirty Gray Industrial',
++    color: '#3d3d3a',
++    roughness: 0.74,
++    metalness: 0.24,
++    emissive: '#000000',
++    emissiveIntensity: 0,
++    opacity: 1,
++  },
++  wetBlackOrganic: {
++    name: 'Wet Black Organic',
++    color: '#030303',
++    roughness: 0.18,
++    metalness: 0.36,
++    emissive: '#000000',
++    emissiveIntensity: 0,
++    opacity: 1,
++  },
++  metal014: {
++    name: 'Metal014',
++    color: '#ffffff',
++    roughness: 0.72,
++    metalness: 1,
++    emissive: '#000000',
++    emissiveIntensity: 0,
++    opacity: 1,
++    textureSet: {
++      id: 'metal014',
++    },
++  },
++}
++
++export default environmentMaterials
+diff --git a/src/styles.css b/src/styles.css
+index a85da6b..c63ba04 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -133,6 +133,24 @@ select {
+   backdrop-filter: blur(16px);
+ }
+ 
++.environment-materials-editor {
++  position: fixed;
++  top: clamp(74px, 9vw, 92px);
++  left: 50%;
++  z-index: 22;
++  width: min(400px, calc(100vw - 28px));
++  max-height: calc(100svh - 112px);
++  overflow: auto;
++  padding: 14px;
++  color: #f8f8f8;
++  background: rgb(0 0 0 / 0.8);
++  border: 1px solid rgb(255 255 255 / 0.16);
++  border-radius: 8px;
++  cursor: auto;
++  transform: translateX(-50%);
++  backdrop-filter: blur(16px);
++}
++
+ .inventory-editor__header {
+   display: flex;
+   align-items: flex-start;
+@@ -182,6 +200,11 @@ select {
+   text-transform: uppercase;
+ }
+ 
++.editor-field--inline {
++  grid-template-columns: 1fr auto;
++  align-items: center;
++}
++
+ .editor-field select,
+ .editor-field input[type="color"],
+ .editor-field input[type="range"] {
+@@ -193,6 +216,14 @@ select {
+   cursor: pointer;
+ }
+ 
++.editor-field input[type="checkbox"] {
++  width: 18px;
++  height: 18px;
++  margin: 0;
++  accent-color: #ffffff;
++  cursor: pointer;
++}
++
+ .editor-readout {
+   display: grid;
+   grid-template-columns: 92px 1fr;
+@@ -592,6 +623,15 @@ h1 {
+     max-height: 42svh;
+   }
+ 
++  .environment-materials-editor {
++    top: 108px;
++    right: 12px;
++    left: 12px;
++    width: auto;
++    max-height: 42svh;
++    transform: none;
++  }
++
+   .crosshair {
+     display: none;
+   }
